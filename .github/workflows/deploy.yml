@@ -76,7 +76,9 @@ jobs:
           IMAGE: ${{ needs.build-push.outputs.image }}
           SHA: ${{ github.sha }}
           ADVISOR_TOKEN: ${{ secrets.ADVISOR_TOKEN }}
-          ADVISOR_DOMAIN: ${{ vars.ADVISOR_DOMAIN }}
+          # Если Variable ADVISOR_DOMAIN не задана — используем sslip.io на IP сервера,
+          # чтобы деплой не записывал пустой домен и Caddy не крэшился.
+          ADVISOR_DOMAIN: ${{ vars.ADVISOR_DOMAIN || '153.56.171.161.sslip.io' }}
           GHCR_USER: ${{ github.actor }}
           GHCR_PAT: ${{ secrets.GHCR_PAT }} # опционально: если пакет приватный
         with:
@@ -88,6 +90,11 @@ jobs:
             set -e
             cd /app
             chmod +x backup.sh || true
+
+            # Пустой домен ломает Caddy (сайт-блок парсится как global-опции) — падаем заранее.
+            if [ -z "${ADVISOR_DOMAIN}" ]; then
+              echo "❌ ADVISOR_DOMAIN пуст — деплой остановлен, чтобы не сломать Caddy"; exit 1
+            fi
 
             # Конфиг для docker compose (интерполяция переменных из .env).
             cat > /app/.env <<EOF
