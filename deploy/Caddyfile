@@ -1,0 +1,8 @@
+# Домен берётся из переменной окружения ADVISOR_DOMAIN (задаётся в /app/.env).
+# Caddy сам получает и продлевает TLS-сертификат Let's Encrypt для этого домена.
+{$ADVISOR_DOMAIN} {
+	encode gzip
+
+	# Всё приложение (API + SPA) обслуживает один контейнер advisor.
+	reverse_proxy advisor:8080
+}

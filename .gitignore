@@ -1,0 +1,44 @@
+# Бинарники и сборки
+/advisor
+/bin/
+*.exe
+*.test
+*.out
+
+# Локальные данные приложения (индекс — производный, в VCS не хранится)
+*.db
+*.db-wal
+*.db-shm
+/data/
+/advisor-data/
+
+# Покрытие
+coverage.out
+coverage.html
+
+# Секреты
+.env
+*.env
+!*.env.example
+
+# Фронтенд (Node)
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.keystore
+
+# ОС / редакторы
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Стрей-бинарь от go build без -o
+/advisord

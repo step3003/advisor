@@ -1,0 +1,19 @@
+# Не отправляем в build-контекст лишнее (ускоряет сборку, уменьшает образ).
+.git
+.github
+android
+docs
+claudedocs
+bin
+data
+web/dist
+web/node_modules
+web/.vite
+**/node_modules
+**/*.db
+**/*.db-wal
+**/*.db-shm
+Dockerfile
+.dockerignore
+deploy
+README*.md

@@ -1,0 +1,125 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # 1. Гейт качества: сборка не начнётся, пока тесты не зелёные.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  # 2. Сборка единого образа (фронт+бэк) и публикация в GitHub Container Registry.
+  build-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute image name (lowercase)
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/advisor" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 3. Деплой на VPS по SSH: копируем compose+Caddyfile, поднимаем стек.
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy deploy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "deploy/docker-compose.yaml,deploy/Caddyfile,deploy/backup.sh"
+          target: /app/
+          strip_components: 1 # кладём файлы прямо в /app/, без подпапки deploy/
+          overwrite: true
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE: ${{ needs.build-push.outputs.image }}
+          SHA: ${{ github.sha }}
+          ADVISOR_TOKEN: ${{ secrets.ADVISOR_TOKEN }}
+          ADVISOR_DOMAIN: ${{ vars.ADVISOR_DOMAIN }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }} # опционально: если пакет приватный
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: IMAGE,SHA,ADVISOR_TOKEN,ADVISOR_DOMAIN,GHCR_USER,GHCR_PAT
+          script: |
+            set -e
+            cd /app
+            chmod +x backup.sh || true
+
+            # Конфиг для docker compose (интерполяция переменных из .env).
+            cat > /app/.env <<EOF
+            ADVISOR_IMAGE=${IMAGE}:${SHA}
+            ADVISOR_TOKEN=${ADVISOR_TOKEN}
+            ADVISOR_DOMAIN=${ADVISOR_DOMAIN}
+            EOF
+            chmod 600 /app/.env
+
+            # Логин в GHCR нужен, только если пакет приватный (иначе публичный тянется без него).
+            if [ -n "${GHCR_PAT}" ]; then
+              echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+            fi
+
+            echo "📦 Pulling ${IMAGE}:${SHA} ..."
+            docker compose pull
+
+            echo "🔄 Bringing stack up ..."
+            docker compose up -d --remove-orphans
+
+            echo "🔍 Health check ..."
+            ok=0
+            for i in $(seq 1 30); do
+              if curl -fsS "https://${ADVISOR_DOMAIN}/api/health" >/dev/null 2>&1; then
+                ok=1; break
+              fi
+              sleep 3
+            done
+            docker compose ps
+            docker image prune -f || true
+            if [ "$ok" = "1" ]; then
+              echo "✅ Deployment healthy"
+            else
+              echo "❌ Health check failed"; docker compose logs --tail=50 advisor; exit 1
+            fi

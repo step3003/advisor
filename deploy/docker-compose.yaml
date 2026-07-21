@@ -1,0 +1,46 @@
+# Прод-стек Advisor: один контейнер приложения (API + SPA) за Caddy (авто-TLS).
+# Переменные (${ADVISOR_IMAGE}, ${ADVISOR_TOKEN}, ${ADVISOR_DOMAIN}) берутся из
+# файла /app/.env, который создаётся деплой-шагом CI. docker compose читает .env
+# из рабочей директории автоматически.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  advisor:
+    image: ${ADVISOR_IMAGE}
+    restart: always
+    logging: *default-logging
+    environment:
+      ADVISOR_ADDR: ":8080"
+      ADVISOR_DB: /data/server.db
+      ADVISOR_WEB: /app/web
+      ADVISOR_TOKEN: ${ADVISOR_TOKEN}
+    volumes:
+      - advisor-data:/data # источник правды (SQLite); именованный том — права из образа
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    logging: *default-logging
+    depends_on:
+      - advisor
+    environment:
+      ADVISOR_DOMAIN: ${ADVISOR_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+
+volumes:
+  advisor-data:
+    name: advisor-data
