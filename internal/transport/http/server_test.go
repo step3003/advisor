@@ -51,7 +51,7 @@ func newTestServer(t *testing.T) *Server {
 		Reporting: reportingsvc.New(idx.Transactions(), currency),
 		Settings:  settingssvc.New(idx.Settings(), idx.Currencies()),
 		IO:        iosvc.New(idx.Categories(), idx.Transactions(), idx.Plans(), idx.Recurring()),
-		SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(), ledger, sysClock, idGen),
+		SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(), idx.Rules(), ledger, sysClock, idGen),
 		Accounts:  accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen),
 		Currency:  currency,
 		Clock:     sysClock,

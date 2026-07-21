@@ -198,9 +198,10 @@ func (s *Server) handleListDrafts(w http.ResponseWriter, r *http.Request) {
 }
 
 type resolveDraftReq struct {
-	CategoryID string    `json:"categoryId"`
-	Amount     *moneyDTO `json:"amount"`
-	Type       string    `json:"type"`
+	CategoryID       string    `json:"categoryId"`
+	Amount           *moneyDTO `json:"amount"`
+	Type             string    `json:"type"`
+	RememberMerchant bool      `json:"rememberMerchant"`
 }
 
 func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
@@ -218,12 +219,56 @@ func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		amountOverride = &m
 	}
-	tx, err := s.svc.SMS.ResolveDraft(r.PathValue("id"), req.CategoryID, amountOverride, core.EntryType(req.Type))
+	tx, err := s.svc.SMS.ResolveDraft(r.PathValue("id"), req.CategoryID, amountOverride, core.EntryType(req.Type), req.RememberMerchant)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, toTransactionDTO(tx))
+}
+
+// --- Правила «продавец → категория» ---
+
+type ruleDTO struct {
+	ID         string `json:"id"`
+	Pattern    string `json:"pattern"`
+	CategoryID string `json:"categoryId"`
+	Priority   int    `json:"priority"`
+}
+
+func (s *Server) handleListRules(w http.ResponseWriter, _ *http.Request) {
+	rules, err := s.svc.SMS.ListRules()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]ruleDTO, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, ruleDTO{ID: r.ID, Pattern: r.Pattern, CategoryID: r.CategoryID, Priority: r.Priority})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
+	var req ruleDTO
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rule, err := s.svc.SMS.CreateRule(req.Pattern, req.CategoryID, req.Priority)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ruleDTO{ID: rule.ID, Pattern: rule.Pattern, CategoryID: rule.CategoryID, Priority: rule.Priority})
+}
+
+func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.SMS.DeleteRule(r.PathValue("id")); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {

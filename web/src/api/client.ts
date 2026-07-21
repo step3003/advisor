@@ -1,5 +1,6 @@
 import type {
   Category,
+  CategoryRule,
   CurrencyInfo,
   EntryType,
   InboxDraft,
@@ -163,9 +164,16 @@ export const resolveDraft = (
   categoryId: string,
   amount?: Money,
   type?: EntryType,
-) => req<Transaction>("POST", `/api/inbox/${id}/resolve`, { categoryId, amount, type });
+  rememberMerchant = false,
+) => req<Transaction>("POST", `/api/inbox/${id}/resolve`, { categoryId, amount, type, rememberMerchant });
 export const deleteDraft = (id: string) =>
   req<void>("DELETE", `/api/inbox/${id}`);
+
+// --- Правила «продавец → категория» ---
+export const listRules = () => req<CategoryRule[]>("GET", "/api/sms/rules");
+export const createRule = (pattern: string, categoryId: string, priority = 0) =>
+  req<CategoryRule>("POST", "/api/sms/rules", { pattern, categoryId, priority });
+export const deleteRule = (id: string) => req<void>("DELETE", `/api/sms/rules/${id}`);
 
 // --- Аккаунты ---
 export const authStatus = () =>

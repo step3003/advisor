@@ -210,6 +210,19 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS ix_sessions_token ON auth_sessions(token_hash)`,
 		},
 	},
+	{
+		// v5: правила авто-категоризации «продавец → категория».
+		version: 5,
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS category_rules(
+				id TEXT PRIMARY KEY,
+				pattern TEXT NOT NULL,                 -- подстрока продавца (без учёта регистра)
+				category_id TEXT NOT NULL REFERENCES categories(id),
+				priority INTEGER NOT NULL DEFAULT 0,
+				created_at TEXT NOT NULL
+			)`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

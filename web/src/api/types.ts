@@ -125,6 +125,13 @@ export interface SmsTestResult {
   defaultCategoryId?: string;
 }
 
+export interface CategoryRule {
+  id: string;
+  pattern: string;
+  categoryId: string;
+  priority: number;
+}
+
 export interface InboxDraft {
   id: string;
   rawSender: string;

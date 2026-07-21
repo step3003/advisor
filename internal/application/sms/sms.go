@@ -79,18 +79,74 @@ type DraftRepo interface {
 	Delete(id string) error
 }
 
+// CategoryRule — правило авто-категоризации «продавец → категория».
+type CategoryRule struct {
+	ID         string
+	Pattern    string // подстрока названия продавца (без учёта регистра)
+	CategoryID string
+	Priority   int
+	CreatedAt  time.Time
+}
+
+// RuleRepo — хранилище правил.
+type RuleRepo interface {
+	Create(r *CategoryRule) error
+	List() ([]*CategoryRule, error) // по убыванию priority
+	Delete(id string) error
+}
+
 // Service — сервис разбора SMS.
 type Service struct {
 	templates TemplateRepo
 	drafts    DraftRepo
+	rules     RuleRepo
 	ledger    *ledgersvc.Service
 	clock     ports.Clock
 	ids       ports.IDGenerator
 }
 
 // New создаёт сервис.
-func New(templates TemplateRepo, drafts DraftRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
-	return &Service{templates: templates, drafts: drafts, ledger: ledger, clock: clock, ids: ids}
+func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
+	return &Service{templates: templates, drafts: drafts, rules: rules, ledger: ledger, clock: clock, ids: ids}
+}
+
+// --- Правила «продавец → категория» ---
+
+func (s *Service) ListRules() ([]*CategoryRule, error) { return s.rules.List() }
+
+func (s *Service) CreateRule(pattern, categoryID string, priority int) (*CategoryRule, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || categoryID == "" {
+		return nil, fmt.Errorf("sms: нужны продавец (подстрока) и категория")
+	}
+	r := &CategoryRule{
+		ID: s.ids.NewID(), Pattern: pattern, CategoryID: categoryID,
+		Priority: priority, CreatedAt: s.clock.Now().UTC(),
+	}
+	if err := s.rules.Create(r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *Service) DeleteRule(id string) error { return s.rules.Delete(id) }
+
+// matchRule возвращает категорию по первому правилу, чья подстрока есть в продавце.
+func (s *Service) matchRule(merchant string) string {
+	if merchant == "" {
+		return ""
+	}
+	rules, err := s.rules.List()
+	if err != nil {
+		return ""
+	}
+	ml := strings.ToLower(merchant)
+	for _, r := range rules {
+		if r.Pattern != "" && strings.Contains(ml, strings.ToLower(r.Pattern)) {
+			return r.CategoryID
+		}
+	}
+	return ""
 }
 
 // --- Шаблоны (CRUD) ---
@@ -179,9 +235,17 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		return IngestOutcome{}, err
 	}
 
-	// Совпал шаблон и задана категория — создаём операцию сразу.
-	if res.Matched && res.DefaultCategoryID != "" {
-		tx, err := s.ledger.Add(res.Type, receivedAt, res.DefaultCategoryID, res.Amount, smsNote(res.Merchant, text))
+	// Категория: правило по продавцу (приоритетнее) → дефолт шаблона.
+	category := res.DefaultCategoryID
+	if res.Matched {
+		if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
+			category = ruleCat
+		}
+	}
+
+	// Есть категория — создаём операцию сразу.
+	if res.Matched && category != "" {
+		tx, err := s.ledger.Add(res.Type, receivedAt, category, res.Amount, smsNote(res.Merchant, text))
 		if err != nil {
 			return IngestOutcome{}, err
 		}
@@ -303,9 +367,10 @@ func (s *Service) ListDrafts(unresolvedOnly bool) ([]*Draft, error) {
 
 func (s *Service) DeleteDraft(id string) error { return s.drafts.Delete(id) }
 
-// ResolveDraft превращает черновик в операцию: назначается категория; сумма/тип
-// берутся из разобранных полей, либо из переданных override (для нераспознанных).
-func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Money, typeOverride core.EntryType) (*transaction.Transaction, error) {
+// ResolveDraft превращает черновик в операцию. Если rememberMerchant=true и у
+// черновика есть продавец — создаётся правило «продавец → категория», и будущие
+// SMS от этого продавца будут разноситься автоматически.
+func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Money, typeOverride core.EntryType, rememberMerchant bool) (*transaction.Transaction, error) {
 	d, err := s.drafts.Get(id)
 	if err != nil {
 		return nil, err
@@ -331,6 +396,10 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	d.Resolved = true
 	if err := s.drafts.Save(d); err != nil {
 		return nil, err
+	}
+	// Запомнить продавца → категорию для будущих SMS.
+	if rememberMerchant && d.Merchant != "" {
+		_, _ = s.CreateRule(d.Merchant, categoryID, 0)
 	}
 	return tx, nil
 }

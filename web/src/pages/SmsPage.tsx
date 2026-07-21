@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Code,
   Group,
   Modal,
@@ -22,16 +23,19 @@ import { useDisclosure } from "@mantine/hooks";
 import { IconEdit, IconPlus, IconTrash, IconTestPipe } from "@tabler/icons-react";
 
 import {
+  createRule,
   createSmsTemplate,
   deleteDraft,
+  deleteRule,
   deleteSmsTemplate,
   listInbox,
+  listRules,
   listSmsTemplates,
   resolveDraft,
   testSms,
   updateSmsTemplate,
 } from "../api/client";
-import type { EntryType, InboxDraft, Money, SmsTemplate, SmsTestResult } from "../api/types";
+import type { CategoryRule, EntryType, InboxDraft, Money, SmsTemplate, SmsTestResult } from "../api/types";
 import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { useCategories } from "../state/categories";
@@ -57,6 +61,7 @@ export function SmsPage() {
   const { displayName } = useCategories();
   const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [drafts, setDrafts] = useState<InboxDraft[]>([]);
+  const [rules, setRules] = useState<CategoryRule[]>([]);
 
   const [tplOpened, tpl] = useDisclosure(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -73,9 +78,10 @@ export function SmsPage() {
 
   async function load() {
     try {
-      const [t, d] = await Promise.all([listSmsTemplates(), listInbox(true)]);
+      const [t, d, rs] = await Promise.all([listSmsTemplates(), listInbox(true), listRules()]);
       setTemplates(t);
       setDrafts(d);
+      setRules(rs);
     } catch (e) {
       notifyError(e);
     }
@@ -206,6 +212,9 @@ export function SmsPage() {
         </Stack>
       </Card>
 
+      {/* Правила «продавец → категория» */}
+      <RulesCard rules={rules} onChange={load} />
+
       {/* Входящие */}
       <Card withBorder padding="md">
         <Title order={5} mb="sm">Входящие ({drafts.length})</Title>
@@ -312,6 +321,7 @@ function ResolveModal({
   const [type, setType] = useState<EntryType>(draft.type ?? "expense");
   const [catId, setCatId] = useState<string | null>(null);
   const [money, setMoney] = useState<Money>(draft.amount ?? { amount: "", currency: defaultCurrency });
+  const [remember, setRemember] = useState(true);
 
   async function submit() {
     if (!catId) {
@@ -319,7 +329,7 @@ function ResolveModal({
       return;
     }
     try {
-      await resolveDraft(draft.id, catId, draft.amount ? undefined : money, type);
+      await resolveDraft(draft.id, catId, draft.amount ? undefined : money, type, remember && !!draft.merchant);
       onDone();
       notifyOk("Операция создана");
     } catch (e) {
@@ -335,11 +345,92 @@ function ResolveModal({
           data={[{ label: "Расход", value: "expense" }, { label: "Доход", value: "income" }]} fullWidth />
         {!draft.amount && <MoneyInput value={money} onChange={setMoney} />}
         <CategorySelect type={type} value={catId} onChange={setCatId} required />
+        {draft.merchant && (
+          <Checkbox
+            checked={remember}
+            onChange={(e) => setRemember(e.currentTarget.checked)}
+            label={`Запомнить: «${draft.merchant}» → эта категория (будущие SMS разнесутся сами)`}
+          />
+        )}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Отмена</Button>
           <Button onClick={submit}>Создать операцию</Button>
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+// RulesCard — правила «продавец → категория»: список + добавление.
+function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () => void }) {
+  const { displayName } = useCategories();
+  const [pattern, setPattern] = useState("");
+  const [catId, setCatId] = useState<string | null>(null);
+
+  async function add() {
+    if (!pattern.trim() || !catId) {
+      notifyError(new Error("Укажите продавца и категорию"));
+      return;
+    }
+    try {
+      await createRule(pattern.trim(), catId);
+      setPattern("");
+      setCatId(null);
+      onChange();
+      notifyOk("Правило добавлено");
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      await deleteRule(id);
+      onChange();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
+  return (
+    <Card withBorder padding="md">
+      <Title order={5} mb="xs">Правила «продавец → категория»</Title>
+      <Text size="sm" c="dimmed" mb="sm">
+        Если название продавца из SMS содержит эту подстроку — операция автоматически
+        относится к указанной категории (без «Входящих»).
+      </Text>
+      <Table striped mb="sm">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Продавец содержит</Table.Th>
+            <Table.Th>Категория</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rules.map((r) => (
+            <Table.Tr key={r.id}>
+              <Table.Td>{r.pattern}</Table.Td>
+              <Table.Td>{displayName(r.categoryId)}</Table.Td>
+              <Table.Td>
+                <ActionIcon variant="subtle" color="red" onClick={() => remove(r.id)} style={{ float: "right" }}>
+                  <IconTrash size={16} />
+                </ActionIcon>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+          {rules.length === 0 && (
+            <Table.Tr><Table.Td colSpan={3}><Text c="dimmed" ta="center" py="sm">Правил пока нет.</Text></Table.Td></Table.Tr>
+          )}
+        </Table.Tbody>
+      </Table>
+      <Group align="flex-end" gap="xs" wrap="wrap">
+        <TextInput label="Продавец (подстрока)" placeholder="YANDEX" value={pattern} onChange={(e) => setPattern(e.currentTarget.value)} />
+        <div style={{ minWidth: 200 }}>
+          <CategorySelect type="expense" value={catId} onChange={setCatId} label="Категория" />
+        </div>
+        <Button leftSection={<IconPlus size={16} />} onClick={add}>Добавить</Button>
+      </Group>
+    </Card>
   );
 }

@@ -129,6 +129,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/inbox/{id}/resolve", s.handleResolveDraft)
 	mux.HandleFunc("DELETE /api/inbox/{id}", s.handleDeleteDraft)
 
+	// Правила «продавец → категория».
+	mux.HandleFunc("GET /api/sms/rules", s.handleListRules)
+	mux.HandleFunc("POST /api/sms/rules", s.handleCreateRule)
+	mux.HandleFunc("DELETE /api/sms/rules/{id}", s.handleDeleteRule)
+
 	// Экспорт
 	mux.HandleFunc("GET /api/export/json", s.handleExportJSON)
 	mux.HandleFunc("GET /api/export/csv", s.handleExportCSV)
