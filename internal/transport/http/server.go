@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	accountsvc "advisor/internal/application/account"
 	catalogsvc "advisor/internal/application/catalog"
 	currencysvc "advisor/internal/application/currency"
 	iosvc "advisor/internal/application/io"
@@ -33,6 +34,7 @@ type Services struct {
 	Settings  *settingssvc.Service
 	IO        *iosvc.Service
 	SMS       *smssvc.Service
+	Accounts  *accountsvc.Service
 	Clock     ports.Clock
 }
 
@@ -67,6 +69,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.S
 
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+
+	// Аккаунты (вход по логину/паролю). status/register/login — без авторизации.
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 
 	// Категории
 	mux.HandleFunc("GET /api/categories", s.handleListCategories)
@@ -127,19 +136,33 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // --- middleware ---
 
+// publicPaths — эндпоинты без авторизации.
+var publicPaths = map[string]bool{
+	"/api/health":        true,
+	"/api/auth/status":   true,
+	"/api/auth/register": true,
+	"/api/auth/login":    true,
+}
+
 func (s *Server) authMW(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Health и preflight — без авторизации.
-		if r.URL.Path == "/api/health" || r.Method == http.MethodOptions {
+		if publicPaths[r.URL.Path] || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
 		token := auth.TokenFromHeader(r.Header.Get("Authorization"))
-		if !s.auth.Valid(token) {
-			writeErr(w, http.StatusUnauthorized, "требуется валидный токен")
+		// Валиден статический токен (устройства/обратная совместимость) ИЛИ сессия аккаунта.
+		if s.auth.Valid(token) {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if s.svc.Accounts != nil {
+			if _, err := s.svc.Accounts.Validate(token); err == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		writeErr(w, http.StatusUnauthorized, "требуется вход")
 	})
 }
 

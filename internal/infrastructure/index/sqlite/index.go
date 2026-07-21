@@ -188,6 +188,28 @@ var migrations = []migration{
 			`ALTER TABLE inbox_drafts ADD COLUMN merchant TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		// v4: аккаунты (вход по логину/паролю) и сессии-токены устройств.
+		version: 4,
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS users(
+				id TEXT PRIMARY KEY,
+				username TEXT NOT NULL UNIQUE,
+				password_hash TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS auth_sessions(
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL REFERENCES users(id),
+				token_hash TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				last_used_at TEXT NOT NULL,
+				revoked_at TEXT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS ix_sessions_token ON auth_sessions(token_hash)`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

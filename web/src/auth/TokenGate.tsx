@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Card,
@@ -6,28 +6,47 @@ import {
   PasswordInput,
   Stack,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
-import { checkAuth, setToken } from "../api/client";
+import { authStatus, login, register, setToken } from "../api/client";
 
+// TokenGate — экран входа по логину/паролю. На первом запуске (аккаунта ещё нет)
+// показывает создание аккаунта, дальше — вход.
 export function TokenGate({ onAuthed }: { onAuthed: () => void }) {
-  const [value, setValue] = useState("");
+  const [registered, setRegistered] = useState<boolean | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    authStatus()
+      .then((s) => setRegistered(s.registered))
+      .catch(() => setRegistered(true)); // при ошибке считаем, что аккаунт есть → показываем вход
+  }, []);
+
   async function submit() {
     setError("");
+    if (!username.trim() || password.length < 6) {
+      setError("Введите логин и пароль (не короче 6 символов)");
+      return;
+    }
     setLoading(true);
-    setToken(value.trim());
     try {
-      await checkAuth();
+      const fn = registered ? login : register;
+      const res = await fn(username.trim(), password);
+      setToken(res.token);
       onAuthed();
-    } catch {
-      setError("Неверный токен или сервер недоступен");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Ошибка входа";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }
+
+  const isRegister = registered === false;
 
   return (
     <Center h="100vh" p="md">
@@ -35,18 +54,23 @@ export function TokenGate({ onAuthed }: { onAuthed: () => void }) {
         <Stack>
           <Title order={3}>Advisor</Title>
           <Text size="sm" c="dimmed">
-            Введите токен доступа к вашему серверу.
+            {isRegister ? "Создайте аккаунт — это первый вход." : "Войдите в аккаунт."}
           </Text>
-          <PasswordInput
-            label="Токен"
-            value={value}
-            onChange={(e) => setValue(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            error={error || undefined}
+          <TextInput
+            label="Логин"
+            value={username}
+            onChange={(e) => setUsername(e.currentTarget.value)}
             autoFocus
           />
-          <Button onClick={submit} loading={loading} disabled={!value.trim()}>
-            Войти
+          <PasswordInput
+            label="Пароль"
+            value={password}
+            onChange={(e) => setPassword(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            error={error || undefined}
+          />
+          <Button onClick={submit} loading={loading || registered === null}>
+            {isRegister ? "Создать аккаунт" : "Войти"}
           </Button>
         </Stack>
       </Card>

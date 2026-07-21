@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	accountsvc "advisor/internal/application/account"
 	catalogsvc "advisor/internal/application/catalog"
 	currencysvc "advisor/internal/application/currency"
 	iosvc "advisor/internal/application/io"
@@ -92,6 +93,7 @@ func run(cfg config) error {
 		Settings:  settingssvc.New(idx.Settings(), idx.Currencies()),
 		IO:        iosvc.New(idx.Categories(), idx.Transactions(), idx.Plans(), idx.Recurring()),
 		SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(), ledger, sysClock, idGen),
+		Accounts:  accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen),
 		Currency:  currency,
 		Clock:     sysClock,
 	}

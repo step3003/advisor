@@ -15,7 +15,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 
-import { getToken, clearToken, refreshRates, setDefaultCurrency } from "../api/client";
+import { getToken, clearToken, logout, refreshRates, setDefaultCurrency } from "../api/client";
 import { useCurrencies } from "../state/currencies";
 import { notifyError, notifyOk } from "../lib/notify";
 import { currentMonth, firstDayOfMonth, lastDayOfMonth } from "../lib/format";
@@ -118,7 +118,7 @@ export function SettingsPage() {
       </Card>
 
       <Card withBorder padding="md">
-        <Button color="red" variant="light" leftSection={<IconLogout size={16} />} onClick={() => { clearToken(); location.reload(); }}>
+        <Button color="red" variant="light" leftSection={<IconLogout size={16} />} onClick={async () => { try { await logout(); } catch { /* всё равно выходим */ } clearToken(); location.reload(); }}>
           Выйти
         </Button>
       </Card>

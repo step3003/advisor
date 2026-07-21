@@ -159,5 +159,14 @@ export const resolveDraft = (
 export const deleteDraft = (id: string) =>
   req<void>("DELETE", `/api/inbox/${id}`);
 
+// --- Аккаунты ---
+export const authStatus = () =>
+  req<{ registered: boolean }>("GET", "/api/auth/status");
+export const register = (username: string, password: string, deviceName = "web") =>
+  req<{ token: string; username: string }>("POST", "/api/auth/register", { username, password, deviceName });
+export const login = (username: string, password: string, deviceName = "web") =>
+  req<{ token: string; username: string }>("POST", "/api/auth/login", { username, password, deviceName });
+export const logout = () => req<void>("POST", "/api/auth/logout");
+
 // Проверка токена: health не требует авторизации, поэтому пробуем защищённый.
 export const checkAuth = () => req<Category[]>("GET", "/api/categories");
