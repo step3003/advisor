@@ -233,9 +233,17 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 		if m == nil || t.AmountGroup >= len(m) {
 			continue
 		}
-		cur := t.FixedCurrency
+		cur := strings.TrimSpace(t.FixedCurrency)
 		if t.CurrencyGroup > 0 && t.CurrencyGroup < len(m) {
-			cur = strings.TrimSpace(m[t.CurrencyGroup])
+			captured := strings.TrimSpace(m[t.CurrencyGroup])
+			if isCurrencyCode(captured) {
+				cur = captured
+			}
+		}
+		// Если валюта не распозналась (кривой шаблон захватил не то) — базовая BYN,
+		// а не мусор вроде "14.70".
+		if !isCurrencyCode(cur) {
+			cur = money.BaseCurrency.String()
 		}
 		amt, err := money.Parse(normalizeAmount(m[t.AmountGroup]), money.Currency(strings.ToUpper(cur)))
 		if err != nil {
@@ -256,6 +264,19 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 		}, nil
 	}
 	return ParseResult{Matched: false}, nil
+}
+
+// isCurrencyCode проверяет, что строка — правдоподобный код валюты (3 латинские буквы).
+func isCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeAmount приводит "1 234,56" → "1234.56" (убирает пробелы, запятая→точка).

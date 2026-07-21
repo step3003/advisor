@@ -87,6 +87,39 @@ func TestSMSParsingFlow(t *testing.T) {
 	}
 }
 
+func TestSMSCurrencyGuard(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Такси", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+
+	// Кривой шаблон: группа валюты указывает на сумму (=1) — валюта захватит число.
+	tmpl := smsTemplateDTO{
+		Name: "Кривая валюта", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) BYN`,
+		AmountGroup: 1, CurrencyGroup: 1, Type: "expense",
+		DefaultCategoryID: cat.ID, Enabled: true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Bank", "text": "Oplata 14.70 BYN. BLR YANDEX.GO", "receivedAt": "2026-07-21",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 {
+		t.Fatalf("ожидалась 1 операция, got %d", len(txs))
+	}
+	// Валюта должна быть BYN (а не "14.70"), сумма — 14.70.
+	if txs[0].Amount.Currency != "BYN" || txs[0].Amount.Amount != "14.70" {
+		t.Fatalf("ожидалось 14.70 BYN, got %s %s", txs[0].Amount.Amount, txs[0].Amount.Currency)
+	}
+}
+
 func TestSMSMerchantCapture(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",
