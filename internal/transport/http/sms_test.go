@@ -161,6 +161,44 @@ func TestSMSMerchantRule(t *testing.T) {
 	}
 }
 
+func TestSMSMerchantDirectory(t *testing.T) {
+	s := newTestServer(t)
+
+	// Шаблон с захватом продавца, но БЕЗ категории → операции идут во «входящие»,
+	// а продавцы копятся в справочнике.
+	tmpl := smsTemplateDTO{
+		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	// Две SMS от одного продавца (14.70 + 5.30) и одна от другого.
+	for _, txt := range []string{
+		"Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN",
+		"Oplata 5.30 BYN. BLR YANDEX.GO. Balance: 13.96 BYN",
+		"Oplata 42.00 BYN. BLR EUROPT. Balance: 100.00 BYN",
+	} {
+		do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+			"sender": "Priorbank", "text": txt, "receivedAt": "2026-07-20",
+		}, true)
+	}
+
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	var merchants []merchantDTO
+	mustJSON(t, body, &merchants)
+	if len(merchants) != 2 {
+		t.Fatalf("ожидалось 2 продавца, got %d: %+v", len(merchants), merchants)
+	}
+	// Первым — самый частый (YANDEX.GO: 2 раза, оборот 20.00).
+	top := merchants[0]
+	if top.Name != "YANDEX.GO" || top.SeenCount != 2 || top.Total.Amount != "20.00" {
+		t.Fatalf("ожидался YANDEX.GO ×2 на 20.00, got %+v", top)
+	}
+}
+
 func TestSMSMerchantCapture(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",

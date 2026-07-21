@@ -95,19 +95,50 @@ type RuleRepo interface {
 	Delete(id string) error
 }
 
+// MerchantEntry — запись справочника продавцов: сколько раз встречался продавец
+// в SMS, на какую сумму, когда в последний раз и какая категория к нему привязана.
+type MerchantEntry struct {
+	Name       string
+	SeenCount  int
+	Total      money.Money
+	LastSeen   string // YYYY-MM-DD
+	CategoryID string // подставляется сервисом из правил (matchRule)
+}
+
+// MerchantRepo — авто-накапливаемый справочник продавцов (по владельцу).
+type MerchantRepo interface {
+	// Observe регистрирует встречу продавца: +1 к счётчику, +сумма к обороту.
+	Observe(name string, amount money.Money, on core.Date) error
+	List() ([]*MerchantEntry, error) // по убыванию частоты
+}
+
 // Service — сервис разбора SMS.
 type Service struct {
 	templates TemplateRepo
 	drafts    DraftRepo
 	rules     RuleRepo
+	merchants MerchantRepo
 	ledger    *ledgersvc.Service
 	clock     ports.Clock
 	ids       ports.IDGenerator
 }
 
 // New создаёт сервис.
-func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
-	return &Service{templates: templates, drafts: drafts, rules: rules, ledger: ledger, clock: clock, ids: ids}
+func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, merchants MerchantRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
+	return &Service{templates: templates, drafts: drafts, rules: rules, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
+}
+
+// ListMerchants возвращает справочник продавцов с подставленной категорией
+// (по текущим правилам «продавец → категория»).
+func (s *Service) ListMerchants() ([]*MerchantEntry, error) {
+	list, err := s.merchants.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range list {
+		m.CategoryID = s.matchRule(m.Name)
+	}
+	return list, nil
 }
 
 // --- Правила «продавец → категория» ---
@@ -233,6 +264,12 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	res, err := parseWith(tmpls, sender, text)
 	if err != nil {
 		return IngestOutcome{}, err
+	}
+
+	// Продавец распознан — учитываем его в справочнике (частота/оборот), даже
+	// если операция уйдёт во «входящие».
+	if res.Matched && res.Merchant != "" {
+		_ = s.merchants.Observe(res.Merchant, res.Amount, receivedAt)
 	}
 
 	// Категория: правило по продавцу (приоритетнее) → дефолт шаблона.

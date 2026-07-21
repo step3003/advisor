@@ -49,7 +49,9 @@ type CategoryRepo struct {
 }
 
 // Categories возвращает репозиторий категорий владельца ownerID.
-func (i *Index) Categories(ownerID string) *CategoryRepo { return &CategoryRepo{idx: i, owner: ownerID} }
+func (i *Index) Categories(ownerID string) *CategoryRepo {
+	return &CategoryRepo{idx: i, owner: ownerID}
+}
 
 func (r *CategoryRepo) Save(c *category.Category) error {
 	data, err := encodeCategory(c)
@@ -463,7 +465,9 @@ type RecurringRepo struct {
 }
 
 // Recurring возвращает репозиторий шаблонов владельца ownerID.
-func (i *Index) Recurring(ownerID string) *RecurringRepo { return &RecurringRepo{idx: i, owner: ownerID} }
+func (i *Index) Recurring(ownerID string) *RecurringRepo {
+	return &RecurringRepo{idx: i, owner: ownerID}
+}
 
 func (r *RecurringRepo) Save(t *recurring.Template) error {
 	data, err := encodeRecurring(t)

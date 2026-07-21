@@ -2,6 +2,7 @@ import type {
   AdminUser,
   Category,
   CategoryRule,
+  Merchant,
   CurrencyInfo,
   EntryType,
   InboxDraft,
@@ -176,6 +177,9 @@ export const listRules = () => req<CategoryRule[]>("GET", "/api/sms/rules");
 export const createRule = (pattern: string, categoryId: string, priority = 0) =>
   req<CategoryRule>("POST", "/api/sms/rules", { pattern, categoryId, priority });
 export const deleteRule = (id: string) => req<void>("DELETE", `/api/sms/rules/${id}`);
+
+// --- Справочник продавцов ---
+export const listMerchants = () => req<Merchant[]>("GET", "/api/sms/merchants");
 
 // --- Аккаунты ---
 export const authStatus = () =>

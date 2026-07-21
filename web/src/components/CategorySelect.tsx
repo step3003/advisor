@@ -10,12 +10,16 @@ export function CategorySelect({
   onChange,
   label = "Категория",
   required,
+  hideLabel,
+  placeholder = "Выберите категорию",
 }: {
   type: EntryType;
   value: string | null;
   onChange: (id: string | null) => void;
   label?: string;
   required?: boolean;
+  hideLabel?: boolean;
+  placeholder?: string;
 }) {
   const { all } = useCategories();
 
@@ -32,8 +36,8 @@ export function CategorySelect({
 
   return (
     <Select
-      label={label}
-      placeholder="Выберите категорию"
+      label={hideLabel ? undefined : label}
+      placeholder={placeholder}
       data={data}
       value={value}
       onChange={onChange}

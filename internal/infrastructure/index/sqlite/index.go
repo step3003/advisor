@@ -265,6 +265,31 @@ var migrations = []migration{
 			`ALTER TABLE settings_new RENAME TO settings`,
 		},
 	},
+	{
+		// v7: справочник продавцов — авто-накопление из SMS (частота/оборот/дата).
+		// Бэкофилл из уже разобранных входящих, чтобы список сразу был не пустой.
+		version: 7,
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS merchants(
+				owner_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				seen_count INTEGER NOT NULL DEFAULT 0,
+				total_minor INTEGER NOT NULL DEFAULT 0,
+				currency TEXT NOT NULL DEFAULT 'BYN',
+				first_seen TEXT NOT NULL,
+				last_seen TEXT NOT NULL,
+				PRIMARY KEY(owner_id, name)
+			)`,
+			`INSERT INTO merchants(owner_id,name,seen_count,total_minor,currency,first_seen,last_seen)
+				SELECT owner_id, merchant, COUNT(*),
+					COALESCE(SUM(parsed_amount_minor), 0),
+					COALESCE(MAX(parsed_currency), 'BYN'),
+					MIN(received_at), MAX(received_at)
+				FROM inbox_drafts
+				WHERE merchant <> ''
+				GROUP BY owner_id, merchant`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

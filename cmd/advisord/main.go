@@ -21,11 +21,11 @@ import (
 	iosvc "advisor/internal/application/io"
 	ledgersvc "advisor/internal/application/ledger"
 	planningsvc "advisor/internal/application/planning"
+	"advisor/internal/application/ports"
 	recurringsvc "advisor/internal/application/recurring"
 	reportingsvc "advisor/internal/application/reporting"
 	settingssvc "advisor/internal/application/settings"
 	smssvc "advisor/internal/application/sms"
-	"advisor/internal/application/ports"
 	"advisor/internal/domain/core"
 	"advisor/internal/infrastructure/auth"
 	"advisor/internal/infrastructure/clock"
@@ -103,8 +103,9 @@ func run(cfg config) error {
 				Reporting: reportingsvc.New(txs, currency),
 				Settings:  settingssvc.New(idx.Settings(uid), idx.Currencies()),
 				IO:        iosvc.New(cats, txs, idx.Plans(uid), idx.Recurring(uid)),
-				// Шаблоны — глобальные (админ-пресеты для всех); правила и черновики — персональные.
-				SMS: smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), userLedger, sysClock, idGen),
+				// Шаблоны — глобальные (админ-пресеты для всех); правила, черновики и
+				// справочник продавцов — персональные.
+				SMS: smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), idx.Merchants(uid), userLedger, sysClock, idGen),
 			}
 		},
 	}

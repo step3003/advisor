@@ -283,6 +283,32 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- Справочник продавцов ---
+
+type merchantDTO struct {
+	Name       string   `json:"name"`
+	SeenCount  int      `json:"seenCount"`
+	Total      moneyDTO `json:"total"`
+	LastSeen   string   `json:"lastSeen"`
+	CategoryID string   `json:"categoryId,omitempty"`
+}
+
+func (s *Server) handleListMerchants(w http.ResponseWriter, r *http.Request) {
+	list, err := s.user(r).SMS.ListMerchants()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]merchantDTO, 0, len(list))
+	for _, m := range list {
+		out = append(out, merchantDTO{
+			Name: m.Name, SeenCount: m.SeenCount, Total: toMoney(m.Total),
+			LastSeen: m.LastSeen, CategoryID: m.CategoryID,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {
 	if err := s.user(r).SMS.DeleteDraft(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

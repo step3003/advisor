@@ -144,6 +144,14 @@ export interface CategoryRule {
   priority: number;
 }
 
+export interface Merchant {
+  name: string;
+  seenCount: number;
+  total: Money;
+  lastSeen: string;
+  categoryId?: string;
+}
+
 export interface InboxDraft {
   id: string;
   rawSender: string;

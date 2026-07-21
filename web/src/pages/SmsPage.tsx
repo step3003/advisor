@@ -29,13 +29,14 @@ import {
   deleteRule,
   deleteSmsTemplate,
   listInbox,
+  listMerchants,
   listRules,
   listSmsTemplates,
   resolveDraft,
   testSms,
   updateSmsTemplate,
 } from "../api/client";
-import type { CategoryRule, EntryType, InboxDraft, Money, SmsTemplate, SmsTestResult } from "../api/types";
+import type { CategoryRule, EntryType, InboxDraft, Merchant, Money, SmsTemplate, SmsTestResult } from "../api/types";
 import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { useCategories } from "../state/categories";
@@ -64,6 +65,7 @@ export function SmsPage() {
   const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [drafts, setDrafts] = useState<InboxDraft[]>([]);
   const [rules, setRules] = useState<CategoryRule[]>([]);
+  const [merchants, setMerchants] = useState<Merchant[]>([]);
 
   const [tplOpened, tpl] = useDisclosure(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,10 +82,11 @@ export function SmsPage() {
 
   async function load() {
     try {
-      const [t, d, rs] = await Promise.all([listSmsTemplates(), listInbox(true), listRules()]);
+      const [t, d, rs, ms] = await Promise.all([listSmsTemplates(), listInbox(true), listRules(), listMerchants()]);
       setTemplates(t);
       setDrafts(d);
       setRules(rs);
+      setMerchants(ms);
     } catch (e) {
       notifyError(e);
     }
@@ -217,6 +220,9 @@ export function SmsPage() {
           )}
         </Stack>
       </Card>
+
+      {/* Справочник продавцов */}
+      <MerchantsCard merchants={merchants} onChange={load} />
 
       {/* Правила «продавец → категория» */}
       <RulesCard rules={rules} onChange={load} />
@@ -364,6 +370,70 @@ function ResolveModal({
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+// MerchantsCard — авто-накапливаемый справочник продавцов из SMS. Назначение
+// категории прямо из строки создаёт правило «продавец → категория».
+function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChange: () => void }) {
+  async function assign(name: string, categoryId: string) {
+    try {
+      await createRule(name, categoryId);
+      onChange();
+      notifyOk(`«${name}» → категория назначена`);
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
+  return (
+    <Card withBorder padding="md">
+      <Title order={5} mb="xs">Справочник продавцов</Title>
+      <Text size="sm" c="dimmed" mb="sm">
+        Продавцы копятся автоматически из SMS. Назначьте категорию — создастся правило,
+        и будущие платежи этого продавца будут разноситься сами. Оборот считается по
+        основной валюте продавца.
+      </Text>
+      <Table striped>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Продавец</Table.Th>
+            <Table.Th ta="right">Встреч</Table.Th>
+            <Table.Th ta="right">Оборот</Table.Th>
+            <Table.Th>Категория</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {merchants.map((m) => (
+            <MerchantRow key={m.name} m={m} onAssign={assign} />
+          ))}
+          {merchants.length === 0 && (
+            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Продавцов пока нет — появятся после разбора SMS.</Text></Table.Td></Table.Tr>
+          )}
+        </Table.Tbody>
+      </Table>
+    </Card>
+  );
+}
+
+function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: (name: string, categoryId: string) => void }) {
+  return (
+    <Table.Tr>
+      <Table.Td>{m.name}</Table.Td>
+      <Table.Td ta="right">{m.seenCount}</Table.Td>
+      <Table.Td ta="right">{formatMoney(m.total)}</Table.Td>
+      <Table.Td>
+        <div style={{ minWidth: 190 }}>
+          <CategorySelect
+            type="expense"
+            value={m.categoryId ?? null}
+            onChange={(id) => id && onAssign(m.name, id)}
+            hideLabel
+            placeholder="Назначить…"
+          />
+        </div>
+      </Table.Td>
+    </Table.Tr>
   );
 }
 
