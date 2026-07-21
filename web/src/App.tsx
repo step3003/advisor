@@ -27,6 +27,7 @@ import {
 import { checkAuth, getToken } from "./api/client";
 import { CategoriesProvider } from "./state/categories";
 import { CurrenciesProvider } from "./state/currencies";
+import { MeProvider } from "./state/me";
 import { TokenGate } from "./auth/TokenGate";
 import { BalancePage } from "./pages/BalancePage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -100,13 +101,15 @@ export function App() {
   }
 
   const content = (
-    <CategoriesProvider>
-      <CurrenciesProvider>
-        {isMobile
-          ? <MobileShell section={section} setSection={setSection} />
-          : <DesktopShell section={section} setSection={setSection} />}
-      </CurrenciesProvider>
-    </CategoriesProvider>
+    <MeProvider>
+      <CategoriesProvider>
+        <CurrenciesProvider>
+          {isMobile
+            ? <MobileShell section={section} setSection={setSection} />
+            : <DesktopShell section={section} setSection={setSection} />}
+        </CurrenciesProvider>
+      </CategoriesProvider>
+    </MeProvider>
   );
   return content;
 }

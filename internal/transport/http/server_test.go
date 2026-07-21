@@ -28,7 +28,8 @@ import (
 
 const testToken = "test-token-123"
 
-func newTestServer(t *testing.T) *Server {
+// buildServer собирает Global + Server поверх временной БД.
+func buildServer(t *testing.T) *Server {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	idx, err := sqlite.Open(dbPath, nopvault.New())
@@ -42,24 +43,46 @@ func newTestServer(t *testing.T) *Server {
 	sysClock := clock.New()
 	idGen := id.New()
 	currency := currencysvc.New(idx.Rates(), nbrb.New())
-	ledger := ledgersvc.New(idx.Transactions(), idx.Categories(), currency, sysClock, idGen)
-	svc := Services{
-		Catalog:   catalogsvc.New(idx.Categories(), sysClock, idGen),
-		Ledger:    ledger,
-		Planning:  planningsvc.New(idx.Plans(), idx.Transactions(), idx.Categories(), currency, sysClock, idGen),
-		Recurring: recurringsvc.New(idx.Recurring(), idx.Plans(), idx.Transactions(), sysClock, idGen),
-		Reporting: reportingsvc.New(idx.Transactions(), currency),
-		Settings:  settingssvc.New(idx.Settings(), idx.Currencies()),
-		IO:        iosvc.New(idx.Categories(), idx.Transactions(), idx.Plans(), idx.Recurring()),
-		SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(), idx.Rules(), ledger, sysClock, idGen),
-		Accounts:  accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen),
-		Currency:  currency,
-		Clock:     sysClock,
+	g := Global{
+		Accounts: accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen),
+		Currency: currency,
+		Clock:    sysClock,
+		ForUser: func(uid string) UserServices {
+			cats := idx.Categories(uid)
+			txs := idx.Transactions(uid)
+			ledger := ledgersvc.New(txs, cats, currency, sysClock, idGen)
+			return UserServices{
+				Catalog:   catalogsvc.New(cats, sysClock, idGen),
+				Ledger:    ledger,
+				Planning:  planningsvc.New(idx.Plans(uid), txs, cats, currency, sysClock, idGen),
+				Recurring: recurringsvc.New(idx.Recurring(uid), idx.Plans(uid), txs, sysClock, idGen),
+				Reporting: reportingsvc.New(txs, currency),
+				Settings:  settingssvc.New(idx.Settings(uid), idx.Currencies()),
+				IO:        iosvc.New(cats, txs, idx.Plans(uid), idx.Recurring(uid)),
+				SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), ledger, sysClock, idGen),
+			}
+		},
 	}
-	if _, err := svc.Catalog.SeedDefaults(); err != nil {
+	return NewServer(g, auth.New(testToken), "", "")
+}
+
+// newCleanServer — сервер без аккаунтов (для теста регистрации).
+func newCleanServer(t *testing.T) *Server { return buildServer(t) }
+
+// newTestServer — сервер с зарегистрированным админом; статический testToken
+// сопоставляется этому админу, поэтому data-тесты работают со его данными.
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	s := buildServer(t)
+	if _, _, err := s.g.Accounts.Register("admin", "adminpass", "test"); err != nil {
+		t.Fatalf("register admin: %v", err)
+	}
+	// Категории засеваем админу (как это делает handleRegister).
+	uid, _ := s.g.Accounts.AdminUserID()
+	if _, err := s.g.ForUser(uid).Catalog.SeedDefaults(); err != nil {
 		t.Fatalf("seed defaults: %v", err)
 	}
-	return NewServer(svc, auth.New(testToken), "", "")
+	return s
 }
 
 // do выполняет запрос к API с токеном (если withAuth) и декодирует JSON-ответ.

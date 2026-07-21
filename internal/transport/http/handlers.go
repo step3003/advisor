@@ -12,7 +12,7 @@ import (
 
 func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 	includeArchived := queryTrim(r, "includeArchived") == "true"
-	cats, err := s.svc.Catalog.List(includeArchived)
+	cats, err := s.user(r).Catalog.List(includeArchived)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -39,9 +39,9 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 	var c *category.Category
 	if req.ParentID == "" {
-		c, err = s.svc.Catalog.Create(req.Name, typ)
+		c, err = s.user(r).Catalog.Create(req.Name, typ)
 	} else {
-		c, err = s.svc.Catalog.CreateSub(req.Name, typ, req.ParentID)
+		c, err = s.user(r).Catalog.CreateSub(req.Name, typ, req.ParentID)
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -63,7 +63,7 @@ func (s *Server) handlePatchCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name != nil {
-		if err := s.svc.Catalog.Rename(id, *req.Name); err != nil {
+		if err := s.user(r).Catalog.Rename(id, *req.Name); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -71,16 +71,16 @@ func (s *Server) handlePatchCategory(w http.ResponseWriter, r *http.Request) {
 	if req.Archived != nil {
 		var err error
 		if *req.Archived {
-			err = s.svc.Catalog.Archive(id)
+			err = s.user(r).Catalog.Archive(id)
 		} else {
-			err = s.svc.Catalog.Unarchive(id)
+			err = s.user(r).Catalog.Unarchive(id)
 		}
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	c, err := s.findCategory(id)
+	c, err := s.findCategory(r, id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "категория не найдена")
 		return
@@ -90,7 +90,7 @@ func (s *Server) handlePatchCategory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := s.svc.Catalog.Delete(id); err != nil {
+	if err := s.user(r).Catalog.Delete(id); err != nil {
 		// Удаление заблокировано при наличии операций/планов (FR-CAT-4).
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -98,8 +98,8 @@ func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) findCategory(id string) (*category.Category, error) {
-	cats, err := s.svc.Catalog.List(true)
+func (s *Server) findCategory(r *http.Request, id string) (*category.Category, error) {
+	cats, err := s.user(r).Catalog.List(true)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (s *Server) handleListPlans(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.svc.Planning.ListMonth(ym)
+	items, err := s.user(r).Planning.ListMonth(ym)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -150,7 +150,7 @@ func (s *Server) handleSetPlan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, err := s.svc.Planning.SetPlan(ym, req.CategoryID, amt, req.Note)
+	p, err := s.user(r).Planning.SetPlan(ym, req.CategoryID, amt, req.Note)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -173,7 +173,7 @@ func (s *Server) handleCopyPrevious(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	n, err := s.svc.Planning.CopyFromPreviousMonth(ym)
+	n, err := s.user(r).Planning.CopyFromPreviousMonth(ym)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -189,7 +189,7 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	txs, err := s.svc.Ledger.ListMonth(ym)
+	txs, err := s.user(r).Ledger.ListMonth(ym)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -226,7 +226,7 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.Ledger.Add(typ, date, req.CategoryID, amt, req.Note)
+	t, err := s.user(r).Ledger.Add(typ, date, req.CategoryID, amt, req.Note)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -251,7 +251,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.Ledger.Edit(id, date, req.CategoryID, amt, req.Note)
+	t, err := s.user(r).Ledger.Edit(id, date, req.CategoryID, amt, req.Note)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -260,7 +260,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.Ledger.Delete(r.PathValue("id")); err != nil {
+	if err := s.user(r).Ledger.Delete(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -275,7 +275,7 @@ func (s *Server) handlePlanVsFact(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	pvf, err := s.svc.Planning.PlanVsFact(ym)
+	pvf, err := s.user(r).Planning.PlanVsFact(ym)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -294,7 +294,7 @@ func (s *Server) handlePeriodReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "параметр to: "+err.Error())
 		return
 	}
-	sum, err := s.svc.Reporting.PeriodSummary(from, to)
+	sum, err := s.user(r).Reporting.PeriodSummary(from, to)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -313,7 +313,7 @@ func (s *Server) handleDynamics(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "параметр to: "+err.Error())
 		return
 	}
-	points, err := s.svc.Reporting.MonthlyDynamics(from, to)
+	points, err := s.user(r).Reporting.MonthlyDynamics(from, to)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -323,10 +323,10 @@ func (s *Server) handleDynamics(w http.ResponseWriter, r *http.Request) {
 
 // --- Экспорт ---
 
-func (s *Server) handleExportJSON(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="advisor-export.json"`)
-	if err := s.svc.IO.Export(w); err != nil {
+	if err := s.user(r).IO.Export(w); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 	}
 }
@@ -344,7 +344,7 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="advisor-transactions.csv"`)
-	if err := s.svc.IO.ExportTransactionsCSV(w, from, to); err != nil {
+	if err := s.user(r).IO.ExportTransactionsCSV(w, from, to); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 	}
 }
@@ -367,5 +367,5 @@ type apiError struct{ msg string }
 
 func (e *apiError) Error() string { return e.msg }
 
-// ensure iosvc import used (Export/ExportTransactionsCSV via s.svc.IO)
+// ensure iosvc import used (Export/ExportTransactionsCSV via s.user(r).IO)
 var _ = iosvc.ModeMerge

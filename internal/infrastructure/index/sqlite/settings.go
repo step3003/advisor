@@ -8,18 +8,18 @@ import (
 	"advisor/internal/domain/money"
 )
 
-// SettingsRepo реализует ports.SettingsStore поверх таблицы settings.
-//
-// Настройки локальны для устройства (в vault не попадают), поэтому
-// RebuildFromVault их не затрагивает.
-type SettingsRepo struct{ idx *Index }
+// SettingsRepo реализует ports.SettingsStore для настроек одного пользователя.
+type SettingsRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Settings возвращает репозиторий настроек.
-func (i *Index) Settings() *SettingsRepo { return &SettingsRepo{idx: i} }
+// Settings возвращает репозиторий настроек владельца ownerID.
+func (i *Index) Settings(ownerID string) *SettingsRepo { return &SettingsRepo{idx: i, owner: ownerID} }
 
 func (r *SettingsRepo) Get(key string) (string, bool, error) {
 	var v string
-	err := r.idx.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	err := r.idx.db.QueryRow(`SELECT value FROM settings WHERE owner_id=? AND key=?`, r.owner, key).Scan(&v)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, nil
@@ -30,8 +30,8 @@ func (r *SettingsRepo) Get(key string) (string, bool, error) {
 }
 
 func (r *SettingsRepo) Set(key, value string) error {
-	_, err := r.idx.db.Exec(`INSERT INTO settings(key, value) VALUES(?,?)
-		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	_, err := r.idx.db.Exec(`INSERT INTO settings(owner_id, key, value) VALUES(?,?,?)
+		ON CONFLICT(owner_id, key) DO UPDATE SET value=excluded.value`, r.owner, key, value)
 	return err
 }
 

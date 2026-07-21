@@ -37,13 +37,23 @@ var (
 	ErrUsernameTaken = errors.New("account: логин уже занят")
 )
 
+// Роли пользователей.
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
+
 // User — учётная запись.
 type User struct {
 	ID           string
 	Username     string
 	PasswordHash string
+	Role         string
 	CreatedAt    time.Time
 }
+
+// IsAdmin сообщает, админ ли пользователь.
+func (u *User) IsAdmin() bool { return u.Role == RoleAdmin }
 
 // Session — токен доступа устройства.
 type Session struct {
@@ -62,6 +72,8 @@ type UserRepo interface {
 	GetByUsername(username string) (*User, error) // ports.ErrRecordNotFound, если нет
 	GetByID(id string) (*User, error)
 	Count() (int, error)
+	All() ([]*User, error)
+	FirstAdmin() (*User, error) // первый по created_at админ
 }
 
 // SessionRepo — хранилище сессий.
@@ -111,6 +123,7 @@ func (s *Service) Register(username, password, deviceName string) (token string,
 		ID:           s.ids.NewID(),
 		Username:     username,
 		PasswordHash: hashPassword(password),
+		Role:         RoleAdmin, // первый пользователь — админ
 		CreatedAt:    s.clock.Now().UTC(),
 	}
 	if err := s.users.Create(u); err != nil {
@@ -121,6 +134,46 @@ func (s *Service) Register(username, password, deviceName string) (token string,
 		return "", nil, err
 	}
 	return token, u, nil
+}
+
+// CreateUser создаёт дополнительный аккаунт (обычного пользователя). Используется
+// админом; токен не выдаётся — пользователь входит сам логином/паролем.
+func (s *Service) CreateUser(username, password string) (*User, error) {
+	username = strings.TrimSpace(strings.ToLower(username))
+	if username == "" || len(password) < 6 {
+		return nil, fmt.Errorf("account: логин обязателен, пароль не короче 6 символов")
+	}
+	if _, err := s.users.GetByUsername(username); err == nil {
+		return nil, ErrUsernameTaken
+	} else if !errors.Is(err, ports.ErrRecordNotFound) {
+		return nil, err
+	}
+	u := &User{
+		ID:           s.ids.NewID(),
+		Username:     username,
+		PasswordHash: hashPassword(password),
+		Role:         RoleUser,
+		CreatedAt:    s.clock.Now().UTC(),
+	}
+	if err := s.users.Create(u); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// ListUsers возвращает всех пользователей (для админа).
+func (s *Service) ListUsers() ([]*User, error) { return s.users.All() }
+
+// User возвращает пользователя по id.
+func (s *Service) User(id string) (*User, error) { return s.users.GetByID(id) }
+
+// AdminUserID возвращает id первого админа (для сопоставления статического токена).
+func (s *Service) AdminUserID() (string, error) {
+	u, err := s.users.FirstAdmin()
+	if err != nil {
+		return "", err
+	}
+	return u.ID, nil
 }
 
 // Login проверяет логин/пароль и выдаёт токен сессии.

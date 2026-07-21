@@ -90,22 +90,25 @@ func scanTemplate(sc scanner) (*smssvc.Template, error) {
 
 // --- Правила «продавец → категория» ---
 
-// RuleRepo реализует sms.RuleRepo поверх таблицы category_rules.
-type RuleRepo struct{ idx *Index }
+// RuleRepo реализует sms.RuleRepo для одного владельца (правила персональные).
+type RuleRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Rules возвращает репозиторий правил авто-категоризации.
-func (i *Index) Rules() *RuleRepo { return &RuleRepo{idx: i} }
+// Rules возвращает репозиторий правил авто-категоризации владельца ownerID.
+func (i *Index) Rules(ownerID string) *RuleRepo { return &RuleRepo{idx: i, owner: ownerID} }
 
 func (r *RuleRepo) Create(rule *smssvc.CategoryRule) error {
-	_, err := r.idx.db.Exec(`INSERT INTO category_rules(id,pattern,category_id,priority,created_at)
-		VALUES(?,?,?,?,?)`,
-		rule.ID, rule.Pattern, rule.CategoryID, rule.Priority, rule.CreatedAt.UTC().Format(rfc3339))
+	_, err := r.idx.db.Exec(`INSERT INTO category_rules(id,owner_id,pattern,category_id,priority,created_at)
+		VALUES(?,?,?,?,?,?)`,
+		rule.ID, r.owner, rule.Pattern, rule.CategoryID, rule.Priority, rule.CreatedAt.UTC().Format(rfc3339))
 	return err
 }
 
 func (r *RuleRepo) List() ([]*smssvc.CategoryRule, error) {
 	rows, err := r.idx.db.Query(`SELECT id,pattern,category_id,priority,created_at
-		FROM category_rules ORDER BY priority DESC, created_at ASC`)
+		FROM category_rules WHERE owner_id=? ORDER BY priority DESC, created_at ASC`, r.owner)
 	if err != nil {
 		return nil, err
 	}
@@ -124,17 +127,20 @@ func (r *RuleRepo) List() ([]*smssvc.CategoryRule, error) {
 }
 
 func (r *RuleRepo) Delete(id string) error {
-	_, err := r.idx.db.Exec(`DELETE FROM category_rules WHERE id=?`, id)
+	_, err := r.idx.db.Exec(`DELETE FROM category_rules WHERE id=? AND owner_id=?`, id, r.owner)
 	return err
 }
 
 // --- Входящие черновики ---
 
-// DraftRepo реализует sms.DraftRepo поверх таблицы inbox_drafts.
-type DraftRepo struct{ idx *Index }
+// DraftRepo реализует sms.DraftRepo для одного владельца.
+type DraftRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Drafts возвращает репозиторий входящих черновиков.
-func (i *Index) Drafts() *DraftRepo { return &DraftRepo{idx: i} }
+// Drafts возвращает репозиторий входящих черновиков владельца ownerID.
+func (i *Index) Drafts(ownerID string) *DraftRepo { return &DraftRepo{idx: i, owner: ownerID} }
 
 func (r *DraftRepo) Save(d *smssvc.Draft) error {
 	var minor sql.NullInt64
@@ -147,30 +153,30 @@ func (r *DraftRepo) Save(d *smssvc.Draft) error {
 		ptype = sql.NullString{String: string(d.ParsedType), Valid: true}
 	}
 	_, err := r.idx.db.Exec(`INSERT INTO inbox_drafts(
-			id,source,raw_sender,raw_text,received_at,parsed_amount_minor,parsed_currency,
+			id,owner_id,source,raw_sender,raw_text,received_at,parsed_amount_minor,parsed_currency,
 			parsed_type,merchant,template_id,resolved,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			parsed_amount_minor=excluded.parsed_amount_minor, parsed_currency=excluded.parsed_currency,
 			parsed_type=excluded.parsed_type, merchant=excluded.merchant,
 			template_id=excluded.template_id, resolved=excluded.resolved`,
-		d.ID, d.Source, d.RawSender, d.RawText, d.ReceivedAt.String(), minor, cur, ptype,
+		d.ID, r.owner, d.Source, d.RawSender, d.RawText, d.ReceivedAt.String(), minor, cur, ptype,
 		d.Merchant, nullStr(d.TemplateID), boolToInt(d.Resolved), d.CreatedAt.UTC().Format(rfc3339))
 	return err
 }
 
 func (r *DraftRepo) Get(id string) (*smssvc.Draft, error) {
-	row := r.idx.db.QueryRow(draftCols+` WHERE id=?`, id)
+	row := r.idx.db.QueryRow(draftCols+` WHERE id=? AND owner_id=?`, id, r.owner)
 	return scanDraft(row)
 }
 
 func (r *DraftRepo) List(unresolvedOnly bool) ([]*smssvc.Draft, error) {
-	q := draftCols
+	q := draftCols + ` WHERE owner_id=?`
 	if unresolvedOnly {
-		q += ` WHERE resolved=0`
+		q += ` AND resolved=0`
 	}
 	q += ` ORDER BY received_at DESC, created_at DESC`
-	rows, err := r.idx.db.Query(q)
+	rows, err := r.idx.db.Query(q, r.owner)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +193,7 @@ func (r *DraftRepo) List(unresolvedOnly bool) ([]*smssvc.Draft, error) {
 }
 
 func (r *DraftRepo) Delete(id string) error {
-	_, err := r.idx.db.Exec(`DELETE FROM inbox_drafts WHERE id=?`, id)
+	_, err := r.idx.db.Exec(`DELETE FROM inbox_drafts WHERE id=? AND owner_id=?`, id, r.owner)
 	return err
 }
 

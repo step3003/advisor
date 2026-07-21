@@ -66,7 +66,7 @@ func (i *Index) RebuildFromVault() (RebuildStats, error) {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
-		if err := upsertCategoryRow(tx, c); err != nil {
+		if err := upsertCategoryRow(tx, "", c); err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
@@ -88,7 +88,7 @@ func (i *Index) RebuildFromVault() (RebuildStats, error) {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
-		if err := upsertPlanRow(tx, p); err != nil {
+		if err := upsertPlanRow(tx, "", p); err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
@@ -110,7 +110,7 @@ func (i *Index) RebuildFromVault() (RebuildStats, error) {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
-		if err := upsertTransactionRow(tx, t); err != nil {
+		if err := upsertTransactionRow(tx, "", t); err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
@@ -132,7 +132,7 @@ func (i *Index) RebuildFromVault() (RebuildStats, error) {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}
-		if err := upsertRecurringRow(tx, tpl); err != nil {
+		if err := upsertRecurringRow(tx, "", tpl); err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", vaultPath(ref), err))
 			continue
 		}

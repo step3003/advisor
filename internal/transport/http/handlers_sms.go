@@ -82,7 +82,7 @@ func (s *Server) handleIngestSMS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	date := core.DateOf(s.svc.Clock.Now())
+	date := core.DateOf(s.g.Clock.Now())
 	if req.ReceivedAt != "" {
 		d, err := core.ParseDate(req.ReceivedAt)
 		if err != nil {
@@ -91,7 +91,7 @@ func (s *Server) handleIngestSMS(w http.ResponseWriter, r *http.Request) {
 		}
 		date = d
 	}
-	out, err := s.svc.SMS.Ingest(req.Sender, req.Text, date)
+	out, err := s.user(r).SMS.Ingest(req.Sender, req.Text, date)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -105,8 +105,8 @@ func (s *Server) handleIngestSMS(w http.ResponseWriter, r *http.Request) {
 
 // --- Шаблоны ---
 
-func (s *Server) handleListSMSTemplates(w http.ResponseWriter, _ *http.Request) {
-	tmpls, err := s.svc.SMS.ListTemplates()
+func (s *Server) handleListSMSTemplates(w http.ResponseWriter, r *http.Request) {
+	tmpls, err := s.user(r).SMS.ListTemplates()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -119,12 +119,16 @@ func (s *Server) handleListSMSTemplates(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (s *Server) handleCreateSMSTemplate(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		writeErr(w, http.StatusForbidden, "шаблоны разбора — общие; менять может только админ")
+		return
+	}
 	var req smsTemplateDTO
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.SMS.CreateTemplate(req.toTemplate())
+	t, err := s.user(r).SMS.CreateTemplate(req.toTemplate())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -133,12 +137,16 @@ func (s *Server) handleCreateSMSTemplate(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleUpdateSMSTemplate(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		writeErr(w, http.StatusForbidden, "шаблоны разбора — общие; менять может только админ")
+		return
+	}
 	var req smsTemplateDTO
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.SMS.UpdateTemplate(r.PathValue("id"), req.toTemplate())
+	t, err := s.user(r).SMS.UpdateTemplate(r.PathValue("id"), req.toTemplate())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -147,7 +155,11 @@ func (s *Server) handleUpdateSMSTemplate(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleDeleteSMSTemplate(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.SMS.DeleteTemplate(r.PathValue("id")); err != nil {
+	if !s.isAdmin(r) {
+		writeErr(w, http.StatusForbidden, "шаблоны разбора — общие; менять может только админ")
+		return
+	}
+	if err := s.user(r).SMS.DeleteTemplate(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -165,7 +177,7 @@ func (s *Server) handleTestSMS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := s.svc.SMS.Test(req.Sender, req.Text)
+	res, err := s.user(r).SMS.Test(req.Sender, req.Text)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -185,7 +197,7 @@ func (s *Server) handleTestSMS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListDrafts(w http.ResponseWriter, r *http.Request) {
 	unresolvedOnly := queryTrim(r, "unresolvedOnly") == "true"
-	drafts, err := s.svc.SMS.ListDrafts(unresolvedOnly)
+	drafts, err := s.user(r).SMS.ListDrafts(unresolvedOnly)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -219,7 +231,7 @@ func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		amountOverride = &m
 	}
-	tx, err := s.svc.SMS.ResolveDraft(r.PathValue("id"), req.CategoryID, amountOverride, core.EntryType(req.Type), req.RememberMerchant)
+	tx, err := s.user(r).SMS.ResolveDraft(r.PathValue("id"), req.CategoryID, amountOverride, core.EntryType(req.Type), req.RememberMerchant)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -236,8 +248,8 @@ type ruleDTO struct {
 	Priority   int    `json:"priority"`
 }
 
-func (s *Server) handleListRules(w http.ResponseWriter, _ *http.Request) {
-	rules, err := s.svc.SMS.ListRules()
+func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := s.user(r).SMS.ListRules()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -255,7 +267,7 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	rule, err := s.svc.SMS.CreateRule(req.Pattern, req.CategoryID, req.Priority)
+	rule, err := s.user(r).SMS.CreateRule(req.Pattern, req.CategoryID, req.Priority)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -264,7 +276,7 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.SMS.DeleteRule(r.PathValue("id")); err != nil {
+	if err := s.user(r).SMS.DeleteRule(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -272,7 +284,7 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.SMS.DeleteDraft(r.PathValue("id")); err != nil {
+	if err := s.user(r).SMS.DeleteDraft(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

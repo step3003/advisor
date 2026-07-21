@@ -1,9 +1,11 @@
 import type {
+  AdminUser,
   Category,
   CategoryRule,
   CurrencyInfo,
   EntryType,
   InboxDraft,
+  Me,
   MonthPoint,
   Money,
   PeriodSummary,
@@ -183,6 +185,12 @@ export const register = (username: string, password: string, deviceName = "web")
 export const login = (username: string, password: string, deviceName = "web") =>
   req<{ token: string; username: string }>("POST", "/api/auth/login", { username, password, deviceName });
 export const logout = () => req<void>("POST", "/api/auth/logout");
+export const me = () => req<Me>("GET", "/api/auth/me");
+
+// --- Управление пользователями (только админ) ---
+export const listUsers = () => req<AdminUser[]>("GET", "/api/admin/users");
+export const createUser = (username: string, password: string) =>
+  req<AdminUser>("POST", "/api/admin/users", { username, password });
 
 // Проверка токена: health не требует авторизации, поэтому пробуем защищённый.
 export const checkAuth = () => req<Category[]>("GET", "/api/categories");

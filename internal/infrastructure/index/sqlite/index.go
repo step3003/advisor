@@ -223,6 +223,48 @@ var migrations = []migration{
 			)`,
 		},
 	},
+	{
+		// v6: мультиаккаунт — роли пользователей и изоляция данных по owner_id.
+		// Существующие данные закрепляются за первым пользователем (админом).
+		// sms_templates и category_rules остаются ГЛОБАЛЬНЫМИ (админ-пресеты для всех).
+		version: 6,
+		stmts: []string{
+			`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`,
+			`UPDATE users SET role='admin'
+				WHERE id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1)`,
+
+			`ALTER TABLE categories ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE transactions ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE plan_items ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE recurring_templates ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE inbox_drafts ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+			// Правила «продавец → категория» — персональные (у каждого свои).
+			`ALTER TABLE category_rules ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+
+			// Бэкофилл: всё существующее — первому пользователю (админу).
+			`UPDATE categories SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+			`UPDATE transactions SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+			`UPDATE plan_items SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+			`UPDATE recurring_templates SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+			`UPDATE inbox_drafts SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+			`UPDATE category_rules SET owner_id=(SELECT id FROM users ORDER BY created_at ASC LIMIT 1) WHERE owner_id=''`,
+
+			`CREATE INDEX IF NOT EXISTS ix_tx_owner ON transactions(owner_id, occurred_on)`,
+			`CREATE INDEX IF NOT EXISTS ix_cat_owner ON categories(owner_id)`,
+
+			// settings → per-user (ключ уникален в рамках владельца).
+			`CREATE TABLE settings_new(
+				owner_id TEXT NOT NULL,
+				key TEXT NOT NULL,
+				value TEXT,
+				PRIMARY KEY(owner_id, key)
+			)`,
+			`INSERT INTO settings_new(owner_id, key, value)
+				SELECT (SELECT id FROM users ORDER BY created_at ASC LIMIT 1), key, value FROM settings`,
+			`DROP TABLE settings`,
+			`ALTER TABLE settings_new RENAME TO settings`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

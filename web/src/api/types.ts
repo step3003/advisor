@@ -125,6 +125,18 @@ export interface SmsTestResult {
   defaultCategoryId?: string;
 }
 
+export interface Me {
+  username: string;
+  role: string;
+  isAdmin: boolean;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: string;
+}
+
 export interface CategoryRule {
   id: string;
   pattern: string;

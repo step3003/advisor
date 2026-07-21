@@ -15,20 +15,28 @@ type UserRepo struct{ idx *Index }
 // Users возвращает репозиторий пользователей.
 func (i *Index) Users() *UserRepo { return &UserRepo{idx: i} }
 
+const userCols = `SELECT id,username,password_hash,role,created_at FROM users`
+
 func (r *UserRepo) Create(u *accountsvc.User) error {
-	_, err := r.idx.db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)`,
-		u.ID, u.Username, u.PasswordHash, u.CreatedAt.UTC().Format(rfc3339))
+	role := u.Role
+	if role == "" {
+		role = accountsvc.RoleUser
+	}
+	_, err := r.idx.db.Exec(`INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)`,
+		u.ID, u.Username, u.PasswordHash, role, u.CreatedAt.UTC().Format(rfc3339))
 	return err
 }
 
 func (r *UserRepo) GetByUsername(username string) (*accountsvc.User, error) {
-	row := r.idx.db.QueryRow(`SELECT id,username,password_hash,created_at FROM users WHERE username=?`, username)
-	return scanUser(row)
+	return scanUser(r.idx.db.QueryRow(userCols+` WHERE username=?`, username))
 }
 
 func (r *UserRepo) GetByID(id string) (*accountsvc.User, error) {
-	row := r.idx.db.QueryRow(`SELECT id,username,password_hash,created_at FROM users WHERE id=?`, id)
-	return scanUser(row)
+	return scanUser(r.idx.db.QueryRow(userCols+` WHERE id=?`, id))
+}
+
+func (r *UserRepo) FirstAdmin() (*accountsvc.User, error) {
+	return scanUser(r.idx.db.QueryRow(userCols + ` WHERE role='admin' ORDER BY created_at ASC LIMIT 1`))
 }
 
 func (r *UserRepo) Count() (int, error) {
@@ -37,10 +45,27 @@ func (r *UserRepo) Count() (int, error) {
 	return n, err
 }
 
+func (r *UserRepo) All() ([]*accountsvc.User, error) {
+	rows, err := r.idx.db.Query(userCols + ` ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*accountsvc.User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 func scanUser(sc scanner) (*accountsvc.User, error) {
 	var u accountsvc.User
 	var created string
-	if err := sc.Scan(&u.ID, &u.Username, &u.PasswordHash, &created); err != nil {
+	if err := sc.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ports.ErrRecordNotFound
 		}

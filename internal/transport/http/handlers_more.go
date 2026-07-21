@@ -11,7 +11,7 @@ import (
 
 func (s *Server) handleListRecurring(w http.ResponseWriter, r *http.Request) {
 	activeOnly := queryTrim(r, "activeOnly") == "true"
-	ts, err := s.svc.Recurring.List(activeOnly)
+	ts, err := s.user(r).Recurring.List(activeOnly)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -64,7 +64,7 @@ func (s *Server) handleCreateRecurring(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.Recurring.Create(typ, req.CategoryID, amt, req.DayOfMonth, start, end, req.AutoCreateFact)
+	t, err := s.user(r).Recurring.Create(typ, req.CategoryID, amt, req.DayOfMonth, start, end, req.AutoCreateFact)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -84,7 +84,7 @@ func (s *Server) handleUpdateRecurring(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := s.svc.Recurring.Update(id, typ, req.CategoryID, amt, req.DayOfMonth, start, end, req.AutoCreateFact)
+	t, err := s.user(r).Recurring.Update(id, typ, req.CategoryID, amt, req.DayOfMonth, start, end, req.AutoCreateFact)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -93,7 +93,7 @@ func (s *Server) handleUpdateRecurring(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePauseRecurring(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.Recurring.Pause(r.PathValue("id")); err != nil {
+	if err := s.user(r).Recurring.Pause(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -101,7 +101,7 @@ func (s *Server) handlePauseRecurring(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResumeRecurring(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.Recurring.Resume(r.PathValue("id")); err != nil {
+	if err := s.user(r).Recurring.Resume(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Server) handleResumeRecurring(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRecurring(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.Recurring.Delete(r.PathValue("id")); err != nil {
+	if err := s.user(r).Recurring.Delete(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -131,7 +131,7 @@ func (s *Server) handleGenerateRecurring(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	stats, err := s.svc.Recurring.GenerateForMonth(ym)
+	stats, err := s.user(r).Recurring.GenerateForMonth(ym)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -152,7 +152,7 @@ func (s *Server) handleRefreshRates(w http.ResponseWriter, r *http.Request) {
 	var req refreshRatesReq
 	// Тело опционально: пустое => сегодняшняя дата.
 	_ = readJSON(r, &req)
-	date := core.DateOf(s.svc.Clock.Now())
+	date := core.DateOf(s.g.Clock.Now())
 	if req.Date != "" {
 		d, err := core.ParseDate(req.Date)
 		if err != nil {
@@ -161,7 +161,7 @@ func (s *Server) handleRefreshRates(w http.ResponseWriter, r *http.Request) {
 		}
 		date = d
 	}
-	n, err := s.svc.Currency.RefreshRates(date)
+	n, err := s.g.Currency.RefreshRates(date)
 	if err != nil {
 		// Сеть может отсутствовать — приложение работает на кэше (FR-CUR-5).
 		writeErr(w, http.StatusBadGateway, "не удалось обновить курсы: "+err.Error())
@@ -175,8 +175,8 @@ type currencyDTO struct {
 	Name string `json:"name"`
 }
 
-func (s *Server) handleListCurrencies(w http.ResponseWriter, _ *http.Request) {
-	infos, err := s.svc.Settings.ListCurrencies()
+func (s *Server) handleListCurrencies(w http.ResponseWriter, r *http.Request) {
+	infos, err := s.user(r).Settings.ListCurrencies()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -195,13 +195,13 @@ type settingsDTO struct {
 	Currencies      []currencyDTO `json:"currencies"`
 }
 
-func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
-	cur, err := s.svc.Settings.DefaultCurrency()
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	cur, err := s.user(r).Settings.DefaultCurrency()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	infos, err := s.svc.Settings.ListCurrencies()
+	infos, err := s.user(r).Settings.ListCurrencies()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -224,7 +224,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DefaultCurrency != nil {
-		if err := s.svc.Settings.SetDefaultCurrency(money.Currency(*req.DefaultCurrency)); err != nil {
+		if err := s.user(r).Settings.SetDefaultCurrency(money.Currency(*req.DefaultCurrency)); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}

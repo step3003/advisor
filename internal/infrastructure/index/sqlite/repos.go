@@ -39,14 +39,17 @@ type execer interface {
 }
 
 // ---------------------------------------------------------------------------
-// Категории
+// Категории (данные пользователя — фильтр по owner_id)
 // ---------------------------------------------------------------------------
 
-// CategoryRepo реализует ports.CategoryRepository.
-type CategoryRepo struct{ idx *Index }
+// CategoryRepo реализует ports.CategoryRepository для одного владельца.
+type CategoryRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Categories возвращает репозиторий категорий.
-func (i *Index) Categories() *CategoryRepo { return &CategoryRepo{idx: i} }
+// Categories возвращает репозиторий категорий владельца ownerID.
+func (i *Index) Categories(ownerID string) *CategoryRepo { return &CategoryRepo{idx: i, owner: ownerID} }
 
 func (r *CategoryRepo) Save(c *category.Category) error {
 	data, err := encodeCategory(c)
@@ -58,13 +61,13 @@ func (r *CategoryRepo) Save(c *category.Category) error {
 	if err := r.idx.vault.Put(ports.Record{RecordRef: ref, Data: data}); err != nil {
 		return err
 	}
-	if err := upsertCategoryRow(r.idx.db, c); err != nil {
+	if err := upsertCategoryRow(r.idx.db, r.owner, c); err != nil {
 		return err
 	}
 	return upsertVaultState(r.idx.db, ref, c.Meta.Rev)
 }
 
-func upsertCategoryRow(q execer, c *category.Category) error {
+func upsertCategoryRow(q execer, owner string, c *category.Category) error {
 	var archived any
 	if c.ArchivedAt != nil {
 		archived = c.ArchivedAt.UTC().Format(time.RFC3339)
@@ -73,30 +76,31 @@ func upsertCategoryRow(q execer, c *category.Category) error {
 	if c.ParentID != "" {
 		parent = c.ParentID
 	}
-	_, err := q.Exec(`INSERT INTO categories(id,name,type,parent_id,color,icon,is_builtin,archived_at,created_at,rev,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+	_, err := q.Exec(`INSERT INTO categories(id,owner_id,name,type,parent_id,color,icon,is_builtin,archived_at,created_at,rev,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, parent_id=excluded.parent_id,
 			color=excluded.color, icon=excluded.icon, is_builtin=excluded.is_builtin,
 			archived_at=excluded.archived_at, rev=excluded.rev, updated_at=excluded.updated_at`,
-		c.Meta.ID, c.Name, string(c.Type), parent, nullStr(c.Color), nullStr(c.Icon),
+		c.Meta.ID, owner, c.Name, string(c.Type), parent, nullStr(c.Color), nullStr(c.Icon),
 		boolToInt(c.IsBuiltin), archived, c.CreatedAt.UTC().Format(time.RFC3339),
 		c.Meta.Rev, c.Meta.UpdatedAt.UTC().Format(time.RFC3339))
 	return err
 }
 
+const catCols = `id,name,type,parent_id,color,icon,is_builtin,archived_at,created_at,rev,updated_at`
+
 func (r *CategoryRepo) Get(id string) (*category.Category, error) {
-	row := r.idx.db.QueryRow(`SELECT id,name,type,parent_id,color,icon,is_builtin,archived_at,created_at,rev,updated_at
-		FROM categories WHERE id=?`, id)
+	row := r.idx.db.QueryRow(`SELECT `+catCols+` FROM categories WHERE id=? AND owner_id=?`, id, r.owner)
 	return scanCategory(row)
 }
 
 func (r *CategoryRepo) List(includeArchived bool) ([]*category.Category, error) {
-	q := `SELECT id,name,type,parent_id,color,icon,is_builtin,archived_at,created_at,rev,updated_at FROM categories`
+	q := `SELECT ` + catCols + ` FROM categories WHERE owner_id=?`
 	if !includeArchived {
-		q += ` WHERE archived_at IS NULL`
+		q += ` AND archived_at IS NULL`
 	}
 	q += ` ORDER BY type, parent_id NULLS FIRST, name`
-	rows, err := r.idx.db.Query(q)
+	rows, err := r.idx.db.Query(q, r.owner)
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +119,11 @@ func (r *CategoryRepo) List(includeArchived bool) ([]*category.Category, error) 
 func (r *CategoryRepo) HasReferences(id string) (bool, error) {
 	var n int
 	err := r.idx.db.QueryRow(`SELECT
-		(SELECT COUNT(*) FROM transactions WHERE category_id=?) +
-		(SELECT COUNT(*) FROM plan_items WHERE category_id=?) +
-		(SELECT COUNT(*) FROM recurring_templates WHERE category_id=?) +
-		(SELECT COUNT(*) FROM categories WHERE parent_id=?)`, id, id, id, id).Scan(&n)
+		(SELECT COUNT(*) FROM transactions WHERE category_id=? AND owner_id=?) +
+		(SELECT COUNT(*) FROM plan_items WHERE category_id=? AND owner_id=?) +
+		(SELECT COUNT(*) FROM recurring_templates WHERE category_id=? AND owner_id=?) +
+		(SELECT COUNT(*) FROM categories WHERE parent_id=? AND owner_id=?)`,
+		id, r.owner, id, r.owner, id, r.owner, id, r.owner).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -129,7 +134,7 @@ func (r *CategoryRepo) Delete(id string) error {
 	if err := r.idx.vault.Delete(ports.RecordRef{Collection: ports.CollectionCategories, ID: id}); err != nil {
 		return err
 	}
-	if _, err := r.idx.db.Exec(`DELETE FROM categories WHERE id=?`, id); err != nil {
+	if _, err := r.idx.db.Exec(`DELETE FROM categories WHERE id=? AND owner_id=?`, id, r.owner); err != nil {
 		return err
 	}
 	_, err := r.idx.db.Exec(`DELETE FROM vault_state WHERE collection=? AND id=?`, ports.CollectionCategories, id)
@@ -176,11 +181,16 @@ func scanCategory(s scanner) (*category.Category, error) {
 // Транзакции
 // ---------------------------------------------------------------------------
 
-// TransactionRepo реализует ports.TransactionRepository.
-type TransactionRepo struct{ idx *Index }
+// TransactionRepo реализует ports.TransactionRepository для одного владельца.
+type TransactionRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Transactions возвращает репозиторий транзакций.
-func (i *Index) Transactions() *TransactionRepo { return &TransactionRepo{idx: i} }
+// Transactions возвращает репозиторий транзакций владельца ownerID.
+func (i *Index) Transactions(ownerID string) *TransactionRepo {
+	return &TransactionRepo{idx: i, owner: ownerID}
+}
 
 func (r *TransactionRepo) Save(t *transaction.Transaction) error {
 	data, err := encodeTransaction(t)
@@ -191,19 +201,19 @@ func (r *TransactionRepo) Save(t *transaction.Transaction) error {
 	if err := r.idx.vault.Put(ports.Record{RecordRef: ref, Data: data}); err != nil {
 		return err
 	}
-	if err := upsertTransactionRow(r.idx.db, t); err != nil {
+	if err := upsertTransactionRow(r.idx.db, r.owner, t); err != nil {
 		return err
 	}
 	return upsertVaultState(r.idx.db, ref, t.Meta.Rev)
 }
 
-func upsertTransactionRow(q execer, t *transaction.Transaction) error {
-	_, err := q.Exec(`INSERT INTO transactions(id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,created_at,rev,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+func upsertTransactionRow(q execer, owner string, t *transaction.Transaction) error {
+	_, err := q.Exec(`INSERT INTO transactions(id,owner_id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,created_at,rev,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET occurred_on=excluded.occurred_on, type=excluded.type,
 			category_id=excluded.category_id, amount_minor=excluded.amount_minor, currency=excluded.currency,
 			note=excluded.note, recurring_id=excluded.recurring_id, rev=excluded.rev, updated_at=excluded.updated_at`,
-		t.Meta.ID, t.OccurredOn.String(), string(t.Type), t.CategoryID, t.Amount.Minor(),
+		t.Meta.ID, owner, t.OccurredOn.String(), string(t.Type), t.CategoryID, t.Amount.Minor(),
 		t.Amount.Currency().String(), nullStr(t.Note), nullStr(t.RecurringID),
 		t.CreatedAt.UTC().Format(time.RFC3339), t.Meta.Rev, t.Meta.UpdatedAt.UTC().Format(time.RFC3339))
 	return err
@@ -212,7 +222,7 @@ func upsertTransactionRow(q execer, t *transaction.Transaction) error {
 const txCols = `id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,created_at,rev,updated_at`
 
 func (r *TransactionRepo) Get(id string) (*transaction.Transaction, error) {
-	row := r.idx.db.QueryRow(`SELECT `+txCols+` FROM transactions WHERE id=?`, id)
+	row := r.idx.db.QueryRow(`SELECT `+txCols+` FROM transactions WHERE id=? AND owner_id=?`, id, r.owner)
 	return scanTransaction(row)
 }
 
@@ -224,29 +234,25 @@ func (r *TransactionRepo) ListByMonth(ym core.YearMonth) ([]*transaction.Transac
 
 func (r *TransactionRepo) ListByPeriod(from, to core.Date) ([]*transaction.Transaction, error) {
 	rows, err := r.idx.db.Query(`SELECT `+txCols+` FROM transactions
-		WHERE occurred_on >= ? AND occurred_on <= ? ORDER BY occurred_on, created_at`,
-		from.String(), to.String())
+		WHERE owner_id=? AND occurred_on >= ? AND occurred_on <= ? ORDER BY occurred_on, created_at`,
+		r.owner, from.String(), to.String())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*transaction.Transaction
-	for rows.Next() {
-		t, err := scanTransaction(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return scanTxRows(rows)
 }
 
 func (r *TransactionRepo) ListAll() ([]*transaction.Transaction, error) {
-	rows, err := r.idx.db.Query(`SELECT ` + txCols + ` FROM transactions ORDER BY occurred_on, created_at`)
+	rows, err := r.idx.db.Query(`SELECT `+txCols+` FROM transactions WHERE owner_id=? ORDER BY occurred_on, created_at`, r.owner)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanTxRows(rows)
+}
+
+func scanTxRows(rows *sql.Rows) ([]*transaction.Transaction, error) {
 	var out []*transaction.Transaction
 	for rows.Next() {
 		t, err := scanTransaction(rows)
@@ -269,7 +275,7 @@ func (r *TransactionRepo) Delete(id string) error {
 	if err := r.idx.vault.Delete(refForTransaction(t)); err != nil {
 		return err
 	}
-	if _, err := r.idx.db.Exec(`DELETE FROM transactions WHERE id=?`, id); err != nil {
+	if _, err := r.idx.db.Exec(`DELETE FROM transactions WHERE id=? AND owner_id=?`, id, r.owner); err != nil {
 		return err
 	}
 	_, err = r.idx.db.Exec(`DELETE FROM vault_state WHERE collection=? AND id=?`, ports.CollectionTransactions, id)
@@ -314,11 +320,14 @@ func scanTransaction(s scanner) (*transaction.Transaction, error) {
 // Планы
 // ---------------------------------------------------------------------------
 
-// PlanRepo реализует ports.PlanRepository.
-type PlanRepo struct{ idx *Index }
+// PlanRepo реализует ports.PlanRepository для одного владельца.
+type PlanRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Plans возвращает репозиторий плановых позиций.
-func (i *Index) Plans() *PlanRepo { return &PlanRepo{idx: i} }
+// Plans возвращает репозиторий плановых позиций владельца ownerID.
+func (i *Index) Plans(ownerID string) *PlanRepo { return &PlanRepo{idx: i, owner: ownerID} }
 
 func (r *PlanRepo) Save(p *plan.PlanItem) error {
 	data, err := encodePlan(p)
@@ -329,19 +338,19 @@ func (r *PlanRepo) Save(p *plan.PlanItem) error {
 	if err := r.idx.vault.Put(ports.Record{RecordRef: ref, Data: data}); err != nil {
 		return err
 	}
-	if err := upsertPlanRow(r.idx.db, p); err != nil {
+	if err := upsertPlanRow(r.idx.db, r.owner, p); err != nil {
 		return err
 	}
 	return upsertVaultState(r.idx.db, ref, p.Meta.Rev)
 }
 
-func upsertPlanRow(q execer, p *plan.PlanItem) error {
-	_, err := q.Exec(`INSERT INTO plan_items(id,year,month,category_id,amount_minor,currency,note,created_at,rev,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)
+func upsertPlanRow(q execer, owner string, p *plan.PlanItem) error {
+	_, err := q.Exec(`INSERT INTO plan_items(id,owner_id,year,month,category_id,amount_minor,currency,note,created_at,rev,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET year=excluded.year, month=excluded.month, category_id=excluded.category_id,
 			amount_minor=excluded.amount_minor, currency=excluded.currency, note=excluded.note,
 			rev=excluded.rev, updated_at=excluded.updated_at`,
-		p.Meta.ID, p.Period.Year, p.Period.Month, p.CategoryID, p.Amount.Minor(),
+		p.Meta.ID, owner, p.Period.Year, p.Period.Month, p.CategoryID, p.Amount.Minor(),
 		p.Amount.Currency().String(), nullStr(p.Note), p.CreatedAt.UTC().Format(time.RFC3339),
 		p.Meta.Rev, p.Meta.UpdatedAt.UTC().Format(time.RFC3339))
 	return err
@@ -350,41 +359,37 @@ func upsertPlanRow(q execer, p *plan.PlanItem) error {
 const planCols = `id,year,month,category_id,amount_minor,currency,note,created_at,rev,updated_at`
 
 func (r *PlanRepo) Get(id string) (*plan.PlanItem, error) {
-	row := r.idx.db.QueryRow(`SELECT `+planCols+` FROM plan_items WHERE id=?`, id)
+	row := r.idx.db.QueryRow(`SELECT `+planCols+` FROM plan_items WHERE id=? AND owner_id=?`, id, r.owner)
 	return scanPlan(row)
 }
 
 func (r *PlanRepo) ListByMonth(ym core.YearMonth) ([]*plan.PlanItem, error) {
-	rows, err := r.idx.db.Query(`SELECT `+planCols+` FROM plan_items WHERE year=? AND month=? ORDER BY category_id`,
-		ym.Year, ym.Month)
+	rows, err := r.idx.db.Query(`SELECT `+planCols+` FROM plan_items WHERE owner_id=? AND year=? AND month=? ORDER BY category_id`,
+		r.owner, ym.Year, ym.Month)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*plan.PlanItem
-	for rows.Next() {
-		p, err := scanPlan(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return scanPlanRows(rows)
 }
 
 func (r *PlanRepo) FindByKey(key plan.Key) (*plan.PlanItem, error) {
 	row := r.idx.db.QueryRow(`SELECT `+planCols+` FROM plan_items
-		WHERE year=? AND month=? AND category_id=? AND currency=?`,
-		key.Period.Year, key.Period.Month, key.CategoryID, key.Currency.String())
+		WHERE owner_id=? AND year=? AND month=? AND category_id=? AND currency=?`,
+		r.owner, key.Period.Year, key.Period.Month, key.CategoryID, key.Currency.String())
 	return scanPlan(row)
 }
 
 func (r *PlanRepo) ListAll() ([]*plan.PlanItem, error) {
-	rows, err := r.idx.db.Query(`SELECT ` + planCols + ` FROM plan_items ORDER BY year, month, category_id`)
+	rows, err := r.idx.db.Query(`SELECT `+planCols+` FROM plan_items WHERE owner_id=? ORDER BY year, month, category_id`, r.owner)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanPlanRows(rows)
+}
+
+func scanPlanRows(rows *sql.Rows) ([]*plan.PlanItem, error) {
 	var out []*plan.PlanItem
 	for rows.Next() {
 		p, err := scanPlan(rows)
@@ -407,7 +412,7 @@ func (r *PlanRepo) Delete(id string) error {
 	if err := r.idx.vault.Delete(refForPlan(p)); err != nil {
 		return err
 	}
-	if _, err := r.idx.db.Exec(`DELETE FROM plan_items WHERE id=?`, id); err != nil {
+	if _, err := r.idx.db.Exec(`DELETE FROM plan_items WHERE id=? AND owner_id=?`, id, r.owner); err != nil {
 		return err
 	}
 	_, err = r.idx.db.Exec(`DELETE FROM vault_state WHERE collection=? AND id=?`, ports.CollectionPlans, id)
@@ -451,11 +456,14 @@ func scanPlan(s scanner) (*plan.PlanItem, error) {
 // Шаблоны повторяющихся операций
 // ---------------------------------------------------------------------------
 
-// RecurringRepo реализует ports.RecurringRepository.
-type RecurringRepo struct{ idx *Index }
+// RecurringRepo реализует ports.RecurringRepository для одного владельца.
+type RecurringRepo struct {
+	idx   *Index
+	owner string
+}
 
-// Recurring возвращает репозиторий шаблонов.
-func (i *Index) Recurring() *RecurringRepo { return &RecurringRepo{idx: i} }
+// Recurring возвращает репозиторий шаблонов владельца ownerID.
+func (i *Index) Recurring(ownerID string) *RecurringRepo { return &RecurringRepo{idx: i, owner: ownerID} }
 
 func (r *RecurringRepo) Save(t *recurring.Template) error {
 	data, err := encodeRecurring(t)
@@ -466,24 +474,24 @@ func (r *RecurringRepo) Save(t *recurring.Template) error {
 	if err := r.idx.vault.Put(ports.Record{RecordRef: ref, Data: data}); err != nil {
 		return err
 	}
-	if err := upsertRecurringRow(r.idx.db, t); err != nil {
+	if err := upsertRecurringRow(r.idx.db, r.owner, t); err != nil {
 		return err
 	}
 	return upsertVaultState(r.idx.db, ref, t.Meta.Rev)
 }
 
-func upsertRecurringRow(q execer, t *recurring.Template) error {
+func upsertRecurringRow(q execer, owner string, t *recurring.Template) error {
 	var end any
 	if t.EndDate != nil {
 		end = t.EndDate.String()
 	}
-	_, err := q.Exec(`INSERT INTO recurring_templates(id,type,category_id,amount_minor,currency,day_of_month,start_date,end_date,auto_create_fact,active,created_at,rev,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := q.Exec(`INSERT INTO recurring_templates(id,owner_id,type,category_id,amount_minor,currency,day_of_month,start_date,end_date,auto_create_fact,active,created_at,rev,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET type=excluded.type, category_id=excluded.category_id,
 			amount_minor=excluded.amount_minor, currency=excluded.currency, day_of_month=excluded.day_of_month,
 			start_date=excluded.start_date, end_date=excluded.end_date, auto_create_fact=excluded.auto_create_fact,
 			active=excluded.active, rev=excluded.rev, updated_at=excluded.updated_at`,
-		t.Meta.ID, string(t.Type), t.CategoryID, t.Amount.Minor(), t.Amount.Currency().String(),
+		t.Meta.ID, owner, string(t.Type), t.CategoryID, t.Amount.Minor(), t.Amount.Currency().String(),
 		t.DayOfMonth, t.StartDate.String(), end, boolToInt(t.AutoCreateFact), boolToInt(t.Active),
 		t.CreatedAt.UTC().Format(time.RFC3339), t.Meta.Rev, t.Meta.UpdatedAt.UTC().Format(time.RFC3339))
 	return err
@@ -492,17 +500,17 @@ func upsertRecurringRow(q execer, t *recurring.Template) error {
 const recCols = `id,type,category_id,amount_minor,currency,day_of_month,start_date,end_date,auto_create_fact,active,created_at,rev,updated_at`
 
 func (r *RecurringRepo) Get(id string) (*recurring.Template, error) {
-	row := r.idx.db.QueryRow(`SELECT `+recCols+` FROM recurring_templates WHERE id=?`, id)
+	row := r.idx.db.QueryRow(`SELECT `+recCols+` FROM recurring_templates WHERE id=? AND owner_id=?`, id, r.owner)
 	return scanRecurring(row)
 }
 
 func (r *RecurringRepo) List(activeOnly bool) ([]*recurring.Template, error) {
-	q := `SELECT ` + recCols + ` FROM recurring_templates`
+	q := `SELECT ` + recCols + ` FROM recurring_templates WHERE owner_id=?`
 	if activeOnly {
-		q += ` WHERE active=1`
+		q += ` AND active=1`
 	}
 	q += ` ORDER BY day_of_month`
-	rows, err := r.idx.db.Query(q)
+	rows, err := r.idx.db.Query(q, r.owner)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +530,7 @@ func (r *RecurringRepo) Delete(id string) error {
 	if err := r.idx.vault.Delete(ports.RecordRef{Collection: ports.CollectionRecurring, ID: id}); err != nil {
 		return err
 	}
-	if _, err := r.idx.db.Exec(`DELETE FROM recurring_templates WHERE id=?`, id); err != nil {
+	if _, err := r.idx.db.Exec(`DELETE FROM recurring_templates WHERE id=? AND owner_id=?`, id, r.owner); err != nil {
 		return err
 	}
 	_, err := r.idx.db.Exec(`DELETE FROM vault_state WHERE collection=? AND id=?`, ports.CollectionRecurring, id)

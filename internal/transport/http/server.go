@@ -4,6 +4,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -23,24 +24,37 @@ import (
 	"advisor/internal/infrastructure/auth"
 )
 
-// Services — usecase-сервисы, внедряемые в API.
-type Services struct {
+// UserServices — usecase-сервисы, привязанные к данным конкретного пользователя.
+type UserServices struct {
 	Catalog   *catalogsvc.Service
 	Ledger    *ledgersvc.Service
 	Planning  *planningsvc.Service
 	Recurring *recurringsvc.Service
 	Reporting *reportingsvc.Service
-	Currency  *currencysvc.Service
 	Settings  *settingssvc.Service
 	IO        *iosvc.Service
 	SMS       *smssvc.Service
-	Accounts  *accountsvc.Service
-	Clock     ports.Clock
 }
+
+// Global — глобальные сервисы и фабрика user-scoped сервисов (собирает main).
+type Global struct {
+	Accounts *accountsvc.Service
+	Currency *currencysvc.Service
+	Clock    ports.Clock
+	// ForUser строит сервисы, работающие с данными пользователя userID.
+	ForUser func(userID string) UserServices
+}
+
+type ctxKey int
+
+const (
+	ctxUserID ctxKey = iota
+	ctxRole
+)
 
 // Server — HTTP-обработчик API.
 type Server struct {
-	svc     Services
+	g       Global
 	auth    *auth.Verifier
 	handler http.Handler
 	cors    string // разрешённый Origin для dev ("" => без CORS-заголовков)
@@ -48,8 +62,8 @@ type Server struct {
 
 // NewServer собирает роутер и middleware. Если webDir не пуст, по путям вне
 // /api/ раздаётся собранный SPA (single-origin, без CORS в проде).
-func NewServer(svc Services, verifier *auth.Verifier, corsOrigin, webDir string) *Server {
-	s := &Server{svc: svc, auth: verifier, cors: corsOrigin}
+func NewServer(g Global, verifier *auth.Verifier, corsOrigin, webDir string) *Server {
+	s := &Server{g: g, auth: verifier, cors: corsOrigin}
 	mux := http.NewServeMux()
 	s.routes(mux)
 	apiChain := recoverMW(loggingMW(s.corsMW(s.authMW(mux))))
@@ -67,6 +81,21 @@ func NewServer(svc Services, verifier *auth.Verifier, corsOrigin, webDir string)
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
+// user строит сервисы для пользователя текущего запроса.
+func (s *Server) user(r *http.Request) UserServices {
+	return s.g.ForUser(s.userID(r))
+}
+
+func (s *Server) userID(r *http.Request) string {
+	uid, _ := r.Context().Value(ctxUserID).(string)
+	return uid
+}
+
+func (s *Server) isAdmin(r *http.Request) bool {
+	role, _ := r.Context().Value(ctxRole).(string)
+	return role == accountsvc.RoleAdmin
+}
+
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
@@ -76,6 +105,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
+
+	// Управление пользователями (только админ).
+	mux.HandleFunc("GET /api/admin/users", s.handleListUsers)
+	mux.HandleFunc("POST /api/admin/users", s.handleCreateUser)
 
 	// Категории
 	mux.HandleFunc("GET /api/categories", s.handleListCategories)
@@ -156,18 +189,27 @@ func (s *Server) authMW(next http.Handler) http.Handler {
 			return
 		}
 		token := auth.TokenFromHeader(r.Header.Get("Authorization"))
-		// Валиден статический токен (устройства/обратная совместимость) ИЛИ сессия аккаунта.
-		if s.auth.Valid(token) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if s.svc.Accounts != nil {
-			if _, err := s.svc.Accounts.Validate(token); err == nil {
-				next.ServeHTTP(w, r)
+		var userID, role string
+		switch {
+		case s.auth.Valid(token):
+			// Статический токен = админ (обратная совместимость: форвардер/скрипты).
+			id, err := s.g.Accounts.AdminUserID()
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "нет админ-аккаунта — сначала регистрация")
 				return
 			}
+			userID, role = id, accountsvc.RoleAdmin
+		default:
+			u, err := s.g.Accounts.Validate(token)
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "требуется вход")
+				return
+			}
+			userID, role = u.ID, u.Role
 		}
-		writeErr(w, http.StatusUnauthorized, "требуется вход")
+		ctx := context.WithValue(r.Context(), ctxUserID, userID)
+		ctx = context.WithValue(ctx, ctxRole, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

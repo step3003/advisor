@@ -38,21 +38,21 @@ func openIndex(t *testing.T, vaultDir, dbPath string) *Index {
 func seed(t *testing.T, idx *Index) (catID, txID, planID, recID string) {
 	t.Helper()
 	cat, _ := category.New("00000000-0000-4000-8000-000000000001", "Еда", core.Expense, now)
-	if err := idx.Categories().Save(cat); err != nil {
+	if err := idx.Categories("").Save(cat); err != nil {
 		t.Fatal(err)
 	}
 	d, _ := core.NewDate(2026, 7, 5)
 	tx, _ := transaction.New("00000000-0000-4000-8000-000000000002", core.Expense, d, cat.Meta.ID, money.MustNew(4250, "USD"), "обед", now)
-	if err := idx.Transactions().Save(tx); err != nil {
+	if err := idx.Transactions("").Save(tx); err != nil {
 		t.Fatal(err)
 	}
 	pi, _ := plan.New("00000000-0000-4000-8000-000000000003", core.YearMonth{Year: 2026, Month: 7}, cat.Meta.ID, money.MustNew(50000, "BYN"), "", now)
-	if err := idx.Plans().Save(pi); err != nil {
+	if err := idx.Plans("").Save(pi); err != nil {
 		t.Fatal(err)
 	}
 	start, _ := core.NewDate(2026, 1, 1)
 	tpl, _ := recurring.New("00000000-0000-4000-8000-000000000004", core.Expense, cat.Meta.ID, money.MustNew(80000, "BYN"), 5, start, nil, false, now)
-	if err := idx.Recurring().Save(tpl); err != nil {
+	if err := idx.Recurring("").Save(tpl); err != nil {
 		t.Fatal(err)
 	}
 	return cat.Meta.ID, tx.Meta.ID, pi.Meta.ID, tpl.Meta.ID
@@ -63,19 +63,19 @@ func TestWriteThroughAndQuery(t *testing.T) {
 	idx := openIndex(t, filepath.Join(dir, "vault"), filepath.Join(dir, "index.db"))
 	catID, txID, _, _ := seed(t, idx)
 
-	got, err := idx.Transactions().Get(txID)
+	got, err := idx.Transactions("").Get(txID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Amount.Decimal() != "42.50" || got.Amount.Currency() != "USD" {
 		t.Errorf("amount = %s %s", got.Amount.Decimal(), got.Amount.Currency())
 	}
-	txs, _ := idx.Transactions().ListByMonth(core.YearMonth{Year: 2026, Month: 7})
+	txs, _ := idx.Transactions("").ListByMonth(core.YearMonth{Year: 2026, Month: 7})
 	if len(txs) != 1 {
 		t.Errorf("month txs = %d, want 1", len(txs))
 	}
 	// FindByKey для плана.
-	pi, err := idx.Plans().FindByKey(plan.Key{Period: core.YearMonth{Year: 2026, Month: 7}, CategoryID: catID, Currency: "BYN"})
+	pi, err := idx.Plans("").FindByKey(plan.Key{Period: core.YearMonth{Year: 2026, Month: 7}, CategoryID: catID, Currency: "BYN"})
 	if err != nil {
 		t.Fatalf("FindByKey: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestWriteThroughAndQuery(t *testing.T) {
 		t.Errorf("plan amount = %d", pi.Amount.Minor())
 	}
 	// HasReferences.
-	has, _ := idx.Categories().HasReferences(catID)
+	has, _ := idx.Categories("").HasReferences(catID)
 	if !has {
 		t.Error("category must have references")
 	}
@@ -114,16 +114,16 @@ func TestRebuildFromVault(t *testing.T) {
 	}
 
 	// Данные восстановлены и совпадают.
-	if c, err := idx2.Categories().Get(catID); err != nil || c.Name != "Еда" {
+	if c, err := idx2.Categories("").Get(catID); err != nil || c.Name != "Еда" {
 		t.Errorf("category not restored: %v", err)
 	}
-	if tx, err := idx2.Transactions().Get(txID); err != nil || tx.Amount.Decimal() != "42.50" {
+	if tx, err := idx2.Transactions("").Get(txID); err != nil || tx.Amount.Decimal() != "42.50" {
 		t.Errorf("transaction not restored: %v", err)
 	}
-	if p, err := idx2.Plans().Get(planID); err != nil || p.Amount.Minor() != 50000 {
+	if p, err := idx2.Plans("").Get(planID); err != nil || p.Amount.Minor() != 50000 {
 		t.Errorf("plan not restored: %v", err)
 	}
-	if r, err := idx2.Recurring().Get(recID); err != nil || r.DayOfMonth != 5 {
+	if r, err := idx2.Recurring("").Get(recID); err != nil || r.DayOfMonth != 5 {
 		t.Errorf("recurring not restored: %v", err)
 	}
 }
@@ -139,11 +139,11 @@ func TestRebuildWithSubcategories(t *testing.T) {
 	// иногда ставил ребёнка раньше родителя.
 	for i := 0; i < 10; i++ {
 		p, _ := category.New(uuidN(2*i+1), "Родитель", core.Expense, now)
-		if err := idx1.Categories().Save(p); err != nil {
+		if err := idx1.Categories("").Save(p); err != nil {
 			t.Fatal(err)
 		}
 		c, _ := category.NewSub(uuidN(2*i+2), "Ребёнок", core.Expense, p.Meta.ID, now)
-		if err := idx1.Categories().Save(c); err != nil {
+		if err := idx1.Categories("").Save(c); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -25,6 +25,8 @@ import (
 	reportingsvc "advisor/internal/application/reporting"
 	settingssvc "advisor/internal/application/settings"
 	smssvc "advisor/internal/application/sms"
+	"advisor/internal/application/ports"
+	"advisor/internal/domain/core"
 	"advisor/internal/infrastructure/auth"
 	"advisor/internal/infrastructure/clock"
 	"advisor/internal/infrastructure/id"
@@ -82,28 +84,35 @@ func run(cfg config) error {
 	sysClock := clock.New()
 	idGen := id.New()
 	currency := currencysvc.New(idx.Rates(), nbrb.New())
-	ledger := ledgersvc.New(idx.Transactions(), idx.Categories(), currency, sysClock, idGen)
+	accounts := accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen)
 
-	svc := apihttp.Services{
-		Catalog:   catalogsvc.New(idx.Categories(), sysClock, idGen),
-		Ledger:    ledger,
-		Planning:  planningsvc.New(idx.Plans(), idx.Transactions(), idx.Categories(), currency, sysClock, idGen),
-		Recurring: recurringsvc.New(idx.Recurring(), idx.Plans(), idx.Transactions(), sysClock, idGen),
-		Reporting: reportingsvc.New(idx.Transactions(), currency),
-		Settings:  settingssvc.New(idx.Settings(), idx.Currencies()),
-		IO:        iosvc.New(idx.Categories(), idx.Transactions(), idx.Plans(), idx.Recurring()),
-		SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(), idx.Rules(), ledger, sysClock, idGen),
-		Accounts:  accountsvc.New(idx.Users(), idx.Sessions(), sysClock, idGen),
-		Currency:  currency,
-		Clock:     sysClock,
+	// Глобальные сервисы + фабрика user-scoped сервисов (данные пользователя по owner_id).
+	g := apihttp.Global{
+		Accounts: accounts,
+		Currency: currency,
+		Clock:    sysClock,
+		ForUser: func(uid string) apihttp.UserServices {
+			cats := idx.Categories(uid)
+			txs := idx.Transactions(uid)
+			userLedger := ledgersvc.New(txs, cats, currency, sysClock, idGen)
+			return apihttp.UserServices{
+				Catalog:   catalogsvc.New(cats, sysClock, idGen),
+				Ledger:    userLedger,
+				Planning:  planningsvc.New(idx.Plans(uid), txs, cats, currency, sysClock, idGen),
+				Recurring: recurringsvc.New(idx.Recurring(uid), idx.Plans(uid), txs, sysClock, idGen),
+				Reporting: reportingsvc.New(txs, currency),
+				Settings:  settingssvc.New(idx.Settings(uid), idx.Currencies()),
+				IO:        iosvc.New(cats, txs, idx.Plans(uid), idx.Recurring(uid)),
+				// Шаблоны — глобальные (админ-пресеты для всех); правила и черновики — персональные.
+				SMS: smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), userLedger, sysClock, idGen),
+			}
+		},
 	}
 
-	// Первый запуск: засеваем предустановленные категории (Приложение A).
-	if _, err := svc.Catalog.SeedDefaults(); err != nil {
-		return err
-	}
+	// Глобальный пресет «Приорбанк» — если шаблонов ещё нет.
+	seedPriorTemplate(idx.SMSTemplates(), sysClock, idGen)
 
-	api := apihttp.NewServer(svc, verifier, cfg.cors, cfg.webDir)
+	api := apihttp.NewServer(g, verifier, cfg.cors, cfg.webDir)
 	srv := &http.Server{
 		Addr:              cfg.addr,
 		Handler:           api,
@@ -131,6 +140,29 @@ func run(cfg config) error {
 		defer cancel()
 		return srv.Shutdown(ctx)
 	}
+}
+
+// seedPriorTemplate создаёт глобальный пресет разбора SMS Приорбанка, если
+// шаблонов ещё нет. Захватывает сумму(1), валюту(2) и продавца(3); категорию
+// не задаёт — категоризация идёт правилами «продавец → категория».
+func seedPriorTemplate(templates smssvc.TemplateRepo, clk ports.Clock, ids ports.IDGenerator) {
+	existing, err := templates.List()
+	if err != nil || len(existing) > 0 {
+		return
+	}
+	_ = templates.Save(&smssvc.Template{
+		ID:            ids.NewID(),
+		Name:          "Приорбанк",
+		Sender:        "Priorbank",
+		Pattern:       `(?:Oplata|Perevod|Snyatie) ([0-9]+[.,][0-9]{2}) ([A-Z]{3})(?:\. BLR (.+?)\. Balance)?`,
+		AmountGroup:   1,
+		CurrencyGroup: 2,
+		MerchantGroup: 3,
+		FixedCurrency: "BYN",
+		Type:          core.Expense,
+		Enabled:       true,
+		CreatedAt:     clk.Now().UTC(),
+	})
 }
 
 func env(key, def string) string {

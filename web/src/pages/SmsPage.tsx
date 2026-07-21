@@ -40,6 +40,7 @@ import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { useCategories } from "../state/categories";
 import { useCurrencies } from "../state/currencies";
+import { useMe } from "../state/me";
 import { notifyError, notifyOk } from "../lib/notify";
 import { formatMoney } from "../lib/format";
 
@@ -59,6 +60,7 @@ const EMPTY: Omit<SmsTemplate, "id"> = {
 
 export function SmsPage() {
   const { displayName } = useCategories();
+  const { isAdmin } = useMe();
   const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [drafts, setDrafts] = useState<InboxDraft[]>([]);
   const [rules, setRules] = useState<CategoryRule[]>([]);
@@ -151,10 +153,12 @@ export function SmsPage() {
       {/* Шаблоны */}
       <Card withBorder padding="md">
         <Group justify="space-between" mb="sm">
-          <Title order={5}>Шаблоны разбора</Title>
-          <Button size="xs" leftSection={<IconPlus size={14} />} onClick={openNew}>
-            Новый шаблон
-          </Button>
+          <Title order={5}>Шаблоны разбора {!isAdmin && <Text span size="xs" c="dimmed">(общие, меняет админ)</Text>}</Title>
+          {isAdmin && (
+            <Button size="xs" leftSection={<IconPlus size={14} />} onClick={openNew}>
+              Новый шаблон
+            </Button>
+          )}
         </Group>
         <Table striped>
           <Table.Thead>
@@ -176,10 +180,12 @@ export function SmsPage() {
                 <Table.Td>{t.defaultCategoryId ? displayName(t.defaultCategoryId) : <Text c="dimmed" size="sm">во входящие</Text>}</Table.Td>
                 <Table.Td>{t.enabled ? <Badge color="green" variant="light">да</Badge> : <Badge color="gray" variant="light">нет</Badge>}</Table.Td>
                 <Table.Td>
-                  <Group gap={2} justify="flex-end" wrap="nowrap">
-                    <ActionIcon variant="subtle" onClick={() => openEdit(t)}><IconEdit size={16} /></ActionIcon>
-                    <ActionIcon variant="subtle" color="red" onClick={() => removeTemplate(t.id)}><IconTrash size={16} /></ActionIcon>
-                  </Group>
+                  {isAdmin && (
+                    <Group gap={2} justify="flex-end" wrap="nowrap">
+                      <ActionIcon variant="subtle" onClick={() => openEdit(t)}><IconEdit size={16} /></ActionIcon>
+                      <ActionIcon variant="subtle" color="red" onClick={() => removeTemplate(t.id)}><IconTrash size={16} /></ActionIcon>
+                    </Group>
+                  )}
                 </Table.Td>
               </Table.Tr>
             ))}
