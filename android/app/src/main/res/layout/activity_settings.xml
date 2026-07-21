@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Захват сообщений"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <Switch
+            android:id="@+id/smsSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ловить входящие SMS" />
+
+        <EditText
+            android:id="@+id/smsFilter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Фильтр отправителя SMS (опц.)"
+            android:inputType="text" />
+
+        <Switch
+            android:id="@+id/notifSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Ловить уведомления приложений" />
+
+        <EditText
+            android:id="@+id/notifPackages"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Приложения для слежки (напр. priorbank,alfa)"
+            android:inputType="text" />
+
+        <Button
+            android:id="@+id/notifAccessButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Выдать доступ к уведомлениям" />
+
+        <Button
+            android:id="@+id/saveButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Сохранить" />
+
+        <Button
+            android:id="@+id/logoutButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Выйти из аккаунта" />
+    </LinearLayout>
+</ScrollView>

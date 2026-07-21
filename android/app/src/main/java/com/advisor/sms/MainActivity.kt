@@ -1,52 +1,91 @@
 package com.advisor.sms
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Switch
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import kotlin.concurrent.thread
 
-/** MainActivity — экран настройки форвардера: адрес сервера, токен, фильтр, вкл/выкл, тест. */
+/**
+ * MainActivity: если не выполнен вход — показывает экран входа в аккаунт; иначе
+ * показывает кабинет (WebView с нашим веб-UI), автоматически залогиненный.
+ */
 class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
-    private lateinit var urlField: EditText
-    private lateinit var tokenField: EditText
-    private lateinit var filterField: EditText
-    private lateinit var enabledSwitch: Switch
-    private lateinit var status: TextView
 
     private val requestSms =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            status.text = if (granted) "Разрешение на SMS выдано" else "Без разрешения на SMS приём не работает"
-        }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
         prefs = Prefs(this)
+        if (prefs.isLoggedIn) showCabinet() else showLogin()
+    }
 
-        urlField = findViewById(R.id.urlField)
-        tokenField = findViewById(R.id.tokenField)
-        filterField = findViewById(R.id.filterField)
-        enabledSwitch = findViewById(R.id.enabledSwitch)
-        status = findViewById(R.id.status)
+    // --- Экран входа ---
+    private fun showLogin() {
+        setContentView(R.layout.activity_login)
+        val urlField = findViewById<EditText>(R.id.urlField)
+        val userField = findViewById<EditText>(R.id.userField)
+        val passField = findViewById<EditText>(R.id.passField)
+        val status = findViewById<TextView>(R.id.status)
+        urlField.setText(prefs.serverUrl.ifEmpty { "https://" })
 
-        urlField.setText(prefs.serverUrl)
-        tokenField.setText(prefs.token)
-        filterField.setText(prefs.senderFilter)
-        enabledSwitch.isChecked = prefs.enabled
+        findViewById<Button>(R.id.loginButton).setOnClickListener {
+            val url = urlField.text.toString().trim().trimEnd('/')
+            val user = userField.text.toString().trim()
+            val pass = passField.text.toString()
+            if (url.isEmpty() || user.isEmpty() || pass.isEmpty()) {
+                status.text = "Заполните адрес, логин и пароль"
+                return@setOnClickListener
+            }
+            status.text = "Вход…"
+            thread {
+                val token = Api.login(url, user, pass)
+                runOnUiThread {
+                    if (token != null) {
+                        prefs.serverUrl = url
+                        prefs.token = token
+                        prefs.username = user
+                        showCabinet()
+                    } else {
+                        status.text = "Не удалось войти: проверьте адрес, логин и пароль"
+                    }
+                }
+            }
+        }
+    }
 
-        findViewById<Button>(R.id.saveButton).setOnClickListener { save() }
-        findViewById<Button>(R.id.testButton).setOnClickListener { test() }
-
+    // --- Кабинет (WebView) ---
+    private fun showCabinet() {
+        setContentView(R.layout.activity_web)
         ensureSmsPermission()
+
+        val web = findViewById<WebView>(R.id.webview)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        val token = prefs.token
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                // Прокидываем токен аккаунта в localStorage, чтобы WebView был залогинен.
+                view.evaluateJavascript(
+                    "try{localStorage.setItem('advisor.token','$token')}catch(e){}", null
+                )
+            }
+        }
+        web.loadUrl(prefs.serverUrl)
+
+        findViewById<Button>(R.id.settingsButton).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
     }
 
     private fun ensureSmsPermission() {
@@ -54,27 +93,6 @@ class MainActivity : AppCompatActivity() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             requestSms.launch(Manifest.permission.RECEIVE_SMS)
-        }
-    }
-
-    private fun save() {
-        prefs.serverUrl = urlField.text.toString()
-        prefs.token = tokenField.text.toString()
-        prefs.senderFilter = filterField.text.toString()
-        prefs.enabled = enabledSwitch.isChecked
-        Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
-        ensureSmsPermission()
-    }
-
-    /** test отправляет тестовое SMS на сервер, проверяя связку URL+токен. */
-    private fun test() {
-        save()
-        status.text = "Отправка теста…"
-        thread {
-            val ok = Forwarder.send(prefs, "TEST", "Oplata 1.00 BYN test")
-            runOnUiThread {
-                status.text = if (ok) "Тест успешен: сервер принял SMS" else "Ошибка: проверьте URL и токен"
-            }
         }
     }
 }

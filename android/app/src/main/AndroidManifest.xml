@@ -6,8 +6,9 @@
 
     <application
         android:allowBackup="true"
-        android:label="Advisor SMS"
+        android:label="Advisor"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Material3.DayNight">
 
         <activity
@@ -19,9 +20,11 @@
             </intent-filter>
         </activity>
 
-        <!-- Приём входящих SMS: система шлёт SMS_RECEIVED, если приложению выдано
-             разрешение RECEIVE_SMS. Работает при сайдлоаде (Google Play доступ к SMS
-             ограничивает). -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
+        <!-- Приём входящих SMS (нужно разрешение RECEIVE_SMS). -->
         <receiver
             android:name=".SmsReceiver"
             android:exported="true"
@@ -30,5 +33,15 @@
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
+
+        <!-- Чтение уведомлений (пуши банка). Пользователь выдаёт «Доступ к уведомлениям». -->
+        <service
+            android:name=".NotificationService"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
