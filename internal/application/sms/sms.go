@@ -27,6 +27,7 @@ type Template struct {
 	Pattern           string // regex по тексту SMS
 	AmountGroup       int    // номер группы суммы (>=1)
 	CurrencyGroup     int    // номер группы валюты; 0 => FixedCurrency
+	MerchantGroup     int    // номер группы продавца; 0 => не захватывать
 	FixedCurrency     string
 	Type              core.EntryType
 	DefaultCategoryID string // "" => операция уйдёт во «входящие» на ручную категоризацию
@@ -44,6 +45,7 @@ type Draft struct {
 	ReceivedAt   core.Date
 	ParsedAmount *money.Money // nil => распознать не удалось
 	ParsedType   core.EntryType
+	Merchant     string // продавец, если захвачен шаблоном
 	TemplateID   string
 	Resolved     bool
 	CreatedAt    time.Time
@@ -56,6 +58,7 @@ type ParseResult struct {
 	TemplateName      string
 	Amount            money.Money
 	Type              core.EntryType
+	Merchant          string // название продавца, если захвачено (MerchantGroup)
 	DefaultCategoryID string
 }
 
@@ -178,7 +181,7 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 
 	// Совпал шаблон и задана категория — создаём операцию сразу.
 	if res.Matched && res.DefaultCategoryID != "" {
-		tx, err := s.ledger.Add(res.Type, receivedAt, res.DefaultCategoryID, res.Amount, "SMS: "+truncate(text, 120))
+		tx, err := s.ledger.Add(res.Type, receivedAt, res.DefaultCategoryID, res.Amount, smsNote(res.Merchant, text))
 		if err != nil {
 			return IngestOutcome{}, err
 		}
@@ -199,11 +202,21 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		amt := res.Amount
 		d.ParsedAmount = &amt
 		d.ParsedType = res.Type
+		d.Merchant = res.Merchant
 	}
 	if err := s.drafts.Save(d); err != nil {
 		return IngestOutcome{}, err
 	}
 	return IngestOutcome{Matched: res.Matched, DraftID: d.ID}, nil
+}
+
+// smsNote формирует примечание операции из SMS: продавец, если захвачен, иначе
+// укороченный текст сообщения.
+func smsNote(merchant, rawText string) string {
+	if merchant != "" {
+		return merchant
+	}
+	return "SMS: " + truncate(rawText, 120)
 }
 
 // parseWith применяет шаблоны по порядку и возвращает первый успешный разбор.
@@ -228,12 +241,17 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 		if err != nil {
 			continue
 		}
+		merchant := ""
+		if t.MerchantGroup > 0 && t.MerchantGroup < len(m) {
+			merchant = strings.TrimSpace(m[t.MerchantGroup])
+		}
 		return ParseResult{
 			Matched:           true,
 			TemplateID:        t.ID,
 			TemplateName:      t.Name,
 			Amount:            amt,
 			Type:              t.Type,
+			Merchant:          merchant,
 			DefaultCategoryID: t.DefaultCategoryID,
 		}, nil
 	}
@@ -285,7 +303,7 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	if !typ.Valid() {
 		return nil, fmt.Errorf("sms: укажите тип операции (расход/доход)")
 	}
-	tx, err := s.ledger.Add(typ, d.ReceivedAt, categoryID, *amount, "SMS: "+truncate(d.RawText, 120))
+	tx, err := s.ledger.Add(typ, d.ReceivedAt, categoryID, *amount, smsNote(d.Merchant, d.RawText))
 	if err != nil {
 		return nil, err
 	}

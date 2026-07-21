@@ -17,6 +17,7 @@ type smsTemplateDTO struct {
 	Pattern           string `json:"pattern"`
 	AmountGroup       int    `json:"amountGroup"`
 	CurrencyGroup     int    `json:"currencyGroup"`
+	MerchantGroup     int    `json:"merchantGroup"`
 	FixedCurrency     string `json:"fixedCurrency"`
 	Type              string `json:"type"`
 	DefaultCategoryID string `json:"defaultCategoryId"`
@@ -27,16 +28,17 @@ type smsTemplateDTO struct {
 func toSMSTemplateDTO(t *smssvc.Template) smsTemplateDTO {
 	return smsTemplateDTO{
 		ID: t.ID, Name: t.Name, Sender: t.Sender, Pattern: t.Pattern,
-		AmountGroup: t.AmountGroup, CurrencyGroup: t.CurrencyGroup, FixedCurrency: t.FixedCurrency,
-		Type: string(t.Type), DefaultCategoryID: t.DefaultCategoryID, Enabled: t.Enabled, Priority: t.Priority,
+		AmountGroup: t.AmountGroup, CurrencyGroup: t.CurrencyGroup, MerchantGroup: t.MerchantGroup,
+		FixedCurrency: t.FixedCurrency, Type: string(t.Type), DefaultCategoryID: t.DefaultCategoryID,
+		Enabled: t.Enabled, Priority: t.Priority,
 	}
 }
 
 func (d smsTemplateDTO) toTemplate() *smssvc.Template {
 	return &smssvc.Template{
 		Name: d.Name, Sender: d.Sender, Pattern: d.Pattern,
-		AmountGroup: d.AmountGroup, CurrencyGroup: d.CurrencyGroup, FixedCurrency: d.FixedCurrency,
-		Type: core.EntryType(d.Type), DefaultCategoryID: d.DefaultCategoryID,
+		AmountGroup: d.AmountGroup, CurrencyGroup: d.CurrencyGroup, MerchantGroup: d.MerchantGroup,
+		FixedCurrency: d.FixedCurrency, Type: core.EntryType(d.Type), DefaultCategoryID: d.DefaultCategoryID,
 		Enabled: d.Enabled, Priority: d.Priority,
 	}
 }
@@ -48,6 +50,7 @@ type draftDTO struct {
 	ReceivedAt string    `json:"receivedAt"`
 	Amount     *moneyDTO `json:"amount,omitempty"`
 	Type       string    `json:"type,omitempty"`
+	Merchant   string    `json:"merchant,omitempty"`
 	TemplateID string    `json:"templateId,omitempty"`
 	Resolved   bool      `json:"resolved"`
 }
@@ -56,7 +59,7 @@ func toDraftDTO(d *smssvc.Draft) draftDTO {
 	out := draftDTO{
 		ID: d.ID, RawSender: d.RawSender, RawText: d.RawText,
 		ReceivedAt: d.ReceivedAt.String(), Type: string(d.ParsedType),
-		TemplateID: d.TemplateID, Resolved: d.Resolved,
+		Merchant: d.Merchant, TemplateID: d.TemplateID, Resolved: d.Resolved,
 	}
 	if d.ParsedAmount != nil {
 		m := toMoney(*d.ParsedAmount)
@@ -172,6 +175,7 @@ func (s *Server) handleTestSMS(w http.ResponseWriter, r *http.Request) {
 		out["templateName"] = res.TemplateName
 		out["amount"] = toMoney(res.Amount)
 		out["type"] = string(res.Type)
+		out["merchant"] = res.Merchant
 		out["defaultCategoryId"] = res.DefaultCategoryID
 	}
 	writeJSON(w, http.StatusOK, out)

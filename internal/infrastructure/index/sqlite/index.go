@@ -180,6 +180,14 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS ix_drafts_unresolved ON inbox_drafts(resolved, received_at)`,
 		},
 	},
+	{
+		// v3: захват названия продавца из SMS (номер regex-группы; 0 = не захватывать).
+		version: 3,
+		stmts: []string{
+			`ALTER TABLE sms_templates ADD COLUMN merchant_group INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE inbox_drafts ADD COLUMN merchant TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

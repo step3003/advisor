@@ -86,3 +86,49 @@ func TestSMSParsingFlow(t *testing.T) {
 		t.Fatalf("resolve draft: %d — %s", rec.Code, body)
 	}
 }
+
+func TestSMSMerchantCapture(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Топливо", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+
+	// Шаблон захватывает сумму(1), валюту(2) и продавца(3).
+	tmpl := smsTemplateDTO{
+		Name:              "Оплата с продавцом",
+		Pattern:           `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup:       1,
+		CurrencyGroup:     2,
+		MerchantGroup:     3,
+		Type:              "expense",
+		DefaultCategoryID: cat.ID,
+		Enabled:           true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	real := "Karta 4***2021 20-07-26 19:08:53. Oplata 14.90 BYN. BLR PRIRODNAYA ZAPRA. Balance: 18.51 BYN Tel. 7299090"
+
+	// Тест-эндпоинт должен вернуть продавца.
+	_, body = do(t, s, http.MethodPost, "/api/sms/test",
+		testSMSReq{Text: real}, true)
+	var test map[string]any
+	mustJSON(t, body, &test)
+	if test["merchant"] != "PRIRODNAYA ZAPRA" {
+		t.Fatalf("тест: ожидался продавец PRIRODNAYA ZAPRA, got %v", test["merchant"])
+	}
+
+	// Ingest создаёт операцию, продавец — в примечании.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": real, "receivedAt": "2026-07-20",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 || txs[0].Note != "PRIRODNAYA ZAPRA" || txs[0].Amount.Amount != "14.90" {
+		t.Fatalf("ожидалась операция 14.90 с примечанием-продавцом, got %+v", txs)
+	}
+}

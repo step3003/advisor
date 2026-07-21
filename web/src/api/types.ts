@@ -108,6 +108,7 @@ export interface SmsTemplate {
   pattern: string;
   amountGroup: number;
   currencyGroup: number;
+  merchantGroup: number;
   fixedCurrency: string;
   type: EntryType;
   defaultCategoryId: string;
@@ -120,6 +121,7 @@ export interface SmsTestResult {
   templateName?: string;
   amount?: Money;
   type?: EntryType;
+  merchant?: string;
   defaultCategoryId?: string;
 }
 
@@ -130,6 +132,7 @@ export interface InboxDraft {
   receivedAt: string;
   amount?: Money;
   type?: EntryType;
+  merchant?: string;
   templateId?: string;
   resolved: boolean;
 }

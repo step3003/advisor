@@ -45,6 +45,7 @@ const EMPTY: Omit<SmsTemplate, "id"> = {
   pattern: "",
   amountGroup: 1,
   currencyGroup: 0,
+  merchantGroup: 0,
   fixedCurrency: "BYN",
   type: "expense",
   defaultCategoryId: "",
@@ -195,6 +196,7 @@ export function SmsPage() {
               <Alert color="green" title={`Совпал шаблон: ${testResult.templateName}`}>
                 Сумма: <b>{testResult.amount ? formatMoney(testResult.amount) : "—"}</b>, тип:{" "}
                 {testResult.type === "income" ? "доход" : "расход"}
+                {testResult.merchant ? <>, продавец: <b>{testResult.merchant}</b></> : null}
                 {testResult.defaultCategoryId ? `, категория: ${displayName(testResult.defaultCategoryId)}` : " (без категории → во входящие)"}
               </Alert>
             ) : (
@@ -213,6 +215,7 @@ export function SmsPage() {
               <Table.Th>Дата</Table.Th>
               <Table.Th>Отправитель</Table.Th>
               <Table.Th>Текст</Table.Th>
+              <Table.Th>Продавец</Table.Th>
               <Table.Th>Сумма</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -222,7 +225,8 @@ export function SmsPage() {
               <Table.Tr key={d.id}>
                 <Table.Td>{d.receivedAt}</Table.Td>
                 <Table.Td>{d.rawSender}</Table.Td>
-                <Table.Td><Text size="sm" lineClamp={2} maw={280}>{d.rawText}</Text></Table.Td>
+                <Table.Td><Text size="sm" lineClamp={2} maw={260}>{d.rawText}</Text></Table.Td>
+                <Table.Td>{d.merchant || <Text c="dimmed" size="sm">—</Text>}</Table.Td>
                 <Table.Td>{d.amount ? formatMoney(d.amount) : <Text c="dimmed" size="sm">?</Text>}</Table.Td>
                 <Table.Td>
                   <Group gap={4} justify="flex-end" wrap="nowrap">
@@ -233,7 +237,7 @@ export function SmsPage() {
               </Table.Tr>
             ))}
             {drafts.length === 0 && (
-              <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Входящих нет.</Text></Table.Td></Table.Tr>
+              <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Входящих нет.</Text></Table.Td></Table.Tr>
             )}
           </Table.Tbody>
         </Table>
@@ -270,6 +274,7 @@ function TemplateModal({
         <Group grow>
           <NumberInput label="Группа суммы" min={1} value={form.amountGroup} onChange={(v) => set("amountGroup", Number(v) || 1)} />
           <NumberInput label="Группа валюты (0 = фикс.)" min={0} value={form.currencyGroup} onChange={(v) => set("currencyGroup", Number(v) || 0)} />
+          <NumberInput label="Группа продавца (0 = нет)" min={0} value={form.merchantGroup} onChange={(v) => set("merchantGroup", Number(v) || 0)} />
         </Group>
         {form.currencyGroup === 0 && (
           <TextInput label="Фиксированная валюта" value={form.fixedCurrency} onChange={(e) => set("fixedCurrency", e.currentTarget.value.toUpperCase())}
