@@ -11,13 +11,29 @@ android {
         applicationId = "com.advisor.sms"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Фиксированный ключ подписи (в репозитории). Гарантирует, что все сборки
+    // подписаны одинаково — новые APK ставятся поверх старых без «конфликта».
+    // Для сайдлоада это нормально; это не Play-релиз, пароль ничего ценного не защищает.
+    signingConfigs {
+        create("shared") {
+            storeFile = file("advisor.jks")
+            storePassword = "advisor123"
+            keyAlias = "advisor"
+            keyPassword = "advisor123"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 
