@@ -15,14 +15,14 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 
-import { getToken, clearToken, logout, refreshRates, setDefaultCurrency } from "../api/client";
+import { apiUrl, getToken, clearToken, logout, refreshRates, setDefaultCurrency } from "../api/client";
 import { useCurrencies } from "../state/currencies";
 import { notifyError, notifyOk } from "../lib/notify";
 import { currentMonth, firstDayOfMonth, lastDayOfMonth } from "../lib/format";
 
 // downloadAuthed скачивает файл с эндпоинта API, передавая Bearer-токен.
 async function downloadAuthed(path: string, filename: string) {
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${getToken()}` } });
+  const res = await fetch(apiUrl(path), { headers: { Authorization: `Bearer ${getToken()}` } });
   if (!res.ok) throw new Error(`Ошибка ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

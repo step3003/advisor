@@ -37,13 +37,21 @@ export class ApiError extends Error {
   }
 }
 
+// Базовый адрес API. Пусто => тот же origin (веб/PWA, статику отдаёт сам сервер).
+// Для нативной сборки (Capacitor) задаётся абсолютный адрес сервера через
+// VITE_API_BASE на этапе сборки — тогда приложение обращается к нему напрямую.
+const API_BASE = ((import.meta.env.VITE_API_BASE as string) || "").replace(/\/$/, "");
+
+// apiUrl возвращает абсолютный (или относительный для PWA) адрес эндпоинта.
+export const apiUrl = (path: string) => API_BASE + path;
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${getToken()}`,
   };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
