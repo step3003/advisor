@@ -88,7 +88,7 @@ func scanTemplate(sc scanner) (*smssvc.Template, error) {
 	return &t, nil
 }
 
-// --- Правила «продавец → категория» ---
+// --- Правила «контрагент → категория» ---
 
 // RuleRepo реализует sms.RuleRepo для одного владельца (правила персональные).
 type RuleRepo struct {

@@ -127,14 +127,14 @@ func TestSMSMerchantRule(t *testing.T) {
 	var taxi categoryDTO
 	mustJSON(t, body, &taxi)
 
-	// Правило: продавец содержит "YANDEX" → категория Такси.
+	// Правило: контрагент содержит "YANDEX" → категория Такси.
 	rec, body := do(t, s, http.MethodPost, "/api/sms/rules",
 		ruleDTO{Pattern: "YANDEX", CategoryID: taxi.ID}, true)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create rule: %d — %s", rec.Code, body)
 	}
 
-	// Шаблон БЕЗ категории, но с захватом продавца.
+	// Шаблон БЕЗ категории, но с захватом контрагента.
 	tmpl := smsTemplateDTO{
 		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
 		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
@@ -164,8 +164,8 @@ func TestSMSMerchantRule(t *testing.T) {
 func TestSMSMerchantDirectory(t *testing.T) {
 	s := newTestServer(t)
 
-	// Шаблон с захватом продавца, но БЕЗ категории → операции идут во «входящие»,
-	// а продавцы копятся в справочнике.
+	// Шаблон с захватом контрагента, но БЕЗ категории → операции идут во «входящие»,
+	// а контрагенты копятся в справочнике.
 	tmpl := smsTemplateDTO{
 		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
 		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
@@ -175,7 +175,7 @@ func TestSMSMerchantDirectory(t *testing.T) {
 		t.Fatalf("create template: %d — %s", rec.Code, body)
 	}
 
-	// Две SMS от одного продавца (14.70 + 5.30) и одна от другого.
+	// Две SMS от одного контрагента (14.70 + 5.30) и одна от другого.
 	for _, txt := range []string{
 		"Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN",
 		"Oplata 5.30 BYN. BLR YANDEX.GO. Balance: 13.96 BYN",
@@ -190,7 +190,7 @@ func TestSMSMerchantDirectory(t *testing.T) {
 	var merchants []merchantDTO
 	mustJSON(t, body, &merchants)
 	if len(merchants) != 2 {
-		t.Fatalf("ожидалось 2 продавца, got %d: %+v", len(merchants), merchants)
+		t.Fatalf("ожидалось 2 контрагента, got %d: %+v", len(merchants), merchants)
 	}
 	// Первым — самый частый (YANDEX.GO: 2 раза, оборот 20.00).
 	top := merchants[0]
@@ -206,7 +206,7 @@ func TestSMSMerchantCapture(t *testing.T) {
 	var cat categoryDTO
 	mustJSON(t, body, &cat)
 
-	// Шаблон захватывает сумму(1), валюту(2) и продавца(3).
+	// Шаблон захватывает сумму(1), валюту(2) и контрагента(3).
 	tmpl := smsTemplateDTO{
 		Name:              "Оплата с продавцом",
 		Pattern:           `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
@@ -224,16 +224,16 @@ func TestSMSMerchantCapture(t *testing.T) {
 
 	real := "Karta 4***2021 20-07-26 19:08:53. Oplata 14.90 BYN. BLR PRIRODNAYA ZAPRA. Balance: 18.51 BYN Tel. 7299090"
 
-	// Тест-эндпоинт должен вернуть продавца.
+	// Тест-эндпоинт должен вернуть контрагента.
 	_, body = do(t, s, http.MethodPost, "/api/sms/test",
 		testSMSReq{Text: real}, true)
 	var test map[string]any
 	mustJSON(t, body, &test)
 	if test["merchant"] != "PRIRODNAYA ZAPRA" {
-		t.Fatalf("тест: ожидался продавец PRIRODNAYA ZAPRA, got %v", test["merchant"])
+		t.Fatalf("тест: ожидался контрагент PRIRODNAYA ZAPRA, got %v", test["merchant"])
 	}
 
-	// Ingest создаёт операцию, продавец — в примечании.
+	// Ingest создаёт операцию, контрагент — в примечании.
 	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
 		"sender": "Priorbank", "text": real, "receivedAt": "2026-07-20",
 	}, true)

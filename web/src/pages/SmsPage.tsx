@@ -211,7 +211,7 @@ export function SmsPage() {
               <Alert color="green" title={`Совпал шаблон: ${testResult.templateName}`}>
                 Сумма: <b>{testResult.amount ? formatMoney(testResult.amount) : "—"}</b>, тип:{" "}
                 {testResult.type === "income" ? "доход" : "расход"}
-                {testResult.merchant ? <>, продавец: <b>{testResult.merchant}</b></> : null}
+                {testResult.merchant ? <>, контрагент: <b>{testResult.merchant}</b></> : null}
                 {testResult.defaultCategoryId ? `, категория: ${displayName(testResult.defaultCategoryId)}` : " (без категории → во входящие)"}
               </Alert>
             ) : (
@@ -221,10 +221,10 @@ export function SmsPage() {
         </Stack>
       </Card>
 
-      {/* Справочник продавцов */}
+      {/* Справочник контрагентов */}
       <MerchantsCard merchants={merchants} onChange={load} />
 
-      {/* Правила «продавец → категория» */}
+      {/* Правила «контрагент → категория» */}
       <RulesCard rules={rules} onChange={load} />
 
       {/* Входящие */}
@@ -236,7 +236,7 @@ export function SmsPage() {
               <Table.Th>Дата</Table.Th>
               <Table.Th>Отправитель</Table.Th>
               <Table.Th>Текст</Table.Th>
-              <Table.Th>Продавец</Table.Th>
+              <Table.Th>Контрагент</Table.Th>
               <Table.Th>Сумма</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -295,7 +295,7 @@ function TemplateModal({
         <Group grow>
           <NumberInput label="Группа суммы" min={1} value={form.amountGroup} onChange={(v) => set("amountGroup", Number(v) || 1)} />
           <NumberInput label="Группа валюты (0 = фикс.)" min={0} value={form.currencyGroup} onChange={(v) => set("currencyGroup", Number(v) || 0)} />
-          <NumberInput label="Группа продавца (0 = нет)" min={0} value={form.merchantGroup} onChange={(v) => set("merchantGroup", Number(v) || 0)} />
+          <NumberInput label="Группа контрагента (0 = нет)" min={0} value={form.merchantGroup} onChange={(v) => set("merchantGroup", Number(v) || 0)} />
         </Group>
         {form.currencyGroup === 0 && (
           <TextInput label="Фиксированная валюта" value={form.fixedCurrency} onChange={(e) => set("fixedCurrency", e.currentTarget.value.toUpperCase())}
@@ -373,8 +373,8 @@ function ResolveModal({
   );
 }
 
-// MerchantsCard — авто-накапливаемый справочник продавцов из SMS. Назначение
-// категории прямо из строки создаёт правило «продавец → категория».
+// MerchantsCard — авто-накапливаемый справочник контрагентов из SMS. Назначение
+// категории прямо из строки создаёт правило «контрагент → категория».
 function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChange: () => void }) {
   async function assign(name: string, categoryId: string) {
     try {
@@ -388,16 +388,16 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
 
   return (
     <Card withBorder padding="md">
-      <Title order={5} mb="xs">Справочник продавцов</Title>
+      <Title order={5} mb="xs">Справочник контрагентов</Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Продавцы копятся автоматически из SMS. Назначьте категорию — создастся правило,
-        и будущие платежи этого продавца будут разноситься сами. Оборот считается по
-        основной валюте продавца.
+        Контрагенты копятся автоматически из SMS. Назначьте категорию — создастся правило,
+        и будущие платежи этого контрагента будут разноситься сами. Оборот считается по
+        основной валюте контрагента.
       </Text>
       <Table striped>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Продавец</Table.Th>
+            <Table.Th>Контрагент</Table.Th>
             <Table.Th ta="right">Встреч</Table.Th>
             <Table.Th ta="right">Оборот</Table.Th>
             <Table.Th>Категория</Table.Th>
@@ -408,7 +408,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
             <MerchantRow key={m.name} m={m} onAssign={assign} />
           ))}
           {merchants.length === 0 && (
-            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Продавцов пока нет — появятся после разбора SMS.</Text></Table.Td></Table.Tr>
+            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет — появятся после разбора SMS.</Text></Table.Td></Table.Tr>
           )}
         </Table.Tbody>
       </Table>
@@ -437,7 +437,7 @@ function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: (name: string, ca
   );
 }
 
-// RulesCard — правила «продавец → категория»: список + добавление.
+// RulesCard — правила «контрагент → категория»: список + добавление.
 function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () => void }) {
   const { displayName } = useCategories();
   const [pattern, setPattern] = useState("");
@@ -445,7 +445,7 @@ function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () =>
 
   async function add() {
     if (!pattern.trim() || !catId) {
-      notifyError(new Error("Укажите продавца и категорию"));
+      notifyError(new Error("Укажите контрагента и категорию"));
       return;
     }
     try {
@@ -470,15 +470,15 @@ function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () =>
 
   return (
     <Card withBorder padding="md">
-      <Title order={5} mb="xs">Правила «продавец → категория»</Title>
+      <Title order={5} mb="xs">Правила «контрагент → категория»</Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Если название продавца из SMS содержит эту подстроку — операция автоматически
+        Если название контрагента из SMS содержит эту подстроку — операция автоматически
         относится к указанной категории (без «Входящих»).
       </Text>
       <Table striped mb="sm">
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Продавец содержит</Table.Th>
+            <Table.Th>Контрагент содержит</Table.Th>
             <Table.Th>Категория</Table.Th>
             <Table.Th />
           </Table.Tr>
@@ -501,7 +501,7 @@ function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () =>
         </Table.Tbody>
       </Table>
       <Group align="flex-end" gap="xs" wrap="wrap">
-        <TextInput label="Продавец (подстрока)" placeholder="YANDEX" value={pattern} onChange={(e) => setPattern(e.currentTarget.value)} />
+        <TextInput label="Контрагент (подстрока)" placeholder="YANDEX" value={pattern} onChange={(e) => setPattern(e.currentTarget.value)} />
         <div style={{ minWidth: 200 }}>
           <CategorySelect type="expense" value={catId} onChange={setCatId} label="Категория" />
         </div>

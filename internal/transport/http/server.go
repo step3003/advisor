@@ -162,10 +162,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/inbox/{id}/resolve", s.handleResolveDraft)
 	mux.HandleFunc("DELETE /api/inbox/{id}", s.handleDeleteDraft)
 
-	// Справочник продавцов (авто-накопление из SMS).
+	// Справочник контрагентов (авто-накопление из SMS).
 	mux.HandleFunc("GET /api/sms/merchants", s.handleListMerchants)
 
-	// Правила «продавец → категория».
+	// Правила «контрагент → категория».
 	mux.HandleFunc("GET /api/sms/rules", s.handleListRules)
 	mux.HandleFunc("POST /api/sms/rules", s.handleCreateRule)
 	mux.HandleFunc("DELETE /api/sms/rules/{id}", s.handleDeleteRule)

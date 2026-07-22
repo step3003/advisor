@@ -239,7 +239,7 @@ func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toTransactionDTO(tx))
 }
 
-// --- Правила «продавец → категория» ---
+// --- Правила «контрагент → категория» ---
 
 type ruleDTO struct {
 	ID         string `json:"id"`
@@ -283,7 +283,7 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Справочник продавцов ---
+// --- Справочник контрагентов ---
 
 type merchantDTO struct {
 	Name       string   `json:"name"`

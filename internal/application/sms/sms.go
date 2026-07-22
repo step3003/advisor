@@ -27,7 +27,7 @@ type Template struct {
 	Pattern           string // regex по тексту SMS
 	AmountGroup       int    // номер группы суммы (>=1)
 	CurrencyGroup     int    // номер группы валюты; 0 => FixedCurrency
-	MerchantGroup     int    // номер группы продавца; 0 => не захватывать
+	MerchantGroup     int    // номер группы контрагента; 0 => не захватывать
 	FixedCurrency     string
 	Type              core.EntryType
 	DefaultCategoryID string // "" => операция уйдёт во «входящие» на ручную категоризацию
@@ -45,7 +45,7 @@ type Draft struct {
 	ReceivedAt   core.Date
 	ParsedAmount *money.Money // nil => распознать не удалось
 	ParsedType   core.EntryType
-	Merchant     string // продавец, если захвачен шаблоном
+	Merchant     string // контрагент, если захвачен шаблоном
 	TemplateID   string
 	Resolved     bool
 	CreatedAt    time.Time
@@ -58,7 +58,7 @@ type ParseResult struct {
 	TemplateName      string
 	Amount            money.Money
 	Type              core.EntryType
-	Merchant          string // название продавца, если захвачено (MerchantGroup)
+	Merchant          string // название контрагента, если захвачено (MerchantGroup)
 	DefaultCategoryID string
 }
 
@@ -79,10 +79,10 @@ type DraftRepo interface {
 	Delete(id string) error
 }
 
-// CategoryRule — правило авто-категоризации «продавец → категория».
+// CategoryRule — правило авто-категоризации «контрагент → категория».
 type CategoryRule struct {
 	ID         string
-	Pattern    string // подстрока названия продавца (без учёта регистра)
+	Pattern    string // подстрока названия контрагента (без учёта регистра)
 	CategoryID string
 	Priority   int
 	CreatedAt  time.Time
@@ -95,7 +95,7 @@ type RuleRepo interface {
 	Delete(id string) error
 }
 
-// MerchantEntry — запись справочника продавцов: сколько раз встречался продавец
+// MerchantEntry — запись справочника контрагентов: сколько раз встречался контрагент
 // в SMS, на какую сумму, когда в последний раз и какая категория к нему привязана.
 type MerchantEntry struct {
 	Name       string
@@ -105,9 +105,9 @@ type MerchantEntry struct {
 	CategoryID string // подставляется сервисом из правил (matchRule)
 }
 
-// MerchantRepo — авто-накапливаемый справочник продавцов (по владельцу).
+// MerchantRepo — авто-накапливаемый справочник контрагентов (по владельцу).
 type MerchantRepo interface {
-	// Observe регистрирует встречу продавца: +1 к счётчику, +сумма к обороту.
+	// Observe регистрирует встречу контрагента: +1 к счётчику, +сумма к обороту.
 	Observe(name string, amount money.Money, on core.Date) error
 	List() ([]*MerchantEntry, error) // по убыванию частоты
 }
@@ -128,8 +128,8 @@ func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, merchants Mer
 	return &Service{templates: templates, drafts: drafts, rules: rules, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
 }
 
-// ListMerchants возвращает справочник продавцов с подставленной категорией
-// (по текущим правилам «продавец → категория»).
+// ListMerchants возвращает справочник контрагентов с подставленной категорией
+// (по текущим правилам «контрагент → категория»).
 func (s *Service) ListMerchants() ([]*MerchantEntry, error) {
 	list, err := s.merchants.List()
 	if err != nil {
@@ -141,14 +141,14 @@ func (s *Service) ListMerchants() ([]*MerchantEntry, error) {
 	return list, nil
 }
 
-// --- Правила «продавец → категория» ---
+// --- Правила «контрагент → категория» ---
 
 func (s *Service) ListRules() ([]*CategoryRule, error) { return s.rules.List() }
 
 func (s *Service) CreateRule(pattern, categoryID string, priority int) (*CategoryRule, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || categoryID == "" {
-		return nil, fmt.Errorf("sms: нужны продавец (подстрока) и категория")
+		return nil, fmt.Errorf("sms: нужны контрагент (подстрока) и категория")
 	}
 	r := &CategoryRule{
 		ID: s.ids.NewID(), Pattern: pattern, CategoryID: categoryID,
@@ -162,7 +162,7 @@ func (s *Service) CreateRule(pattern, categoryID string, priority int) (*Categor
 
 func (s *Service) DeleteRule(id string) error { return s.rules.Delete(id) }
 
-// matchRule возвращает категорию по первому правилу, чья подстрока есть в продавце.
+// matchRule возвращает категорию по первому правилу, чья подстрока есть в контрагенте.
 func (s *Service) matchRule(merchant string) string {
 	if merchant == "" {
 		return ""
@@ -266,7 +266,7 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		return IngestOutcome{}, err
 	}
 
-	// Продавец распознан — учитываем его в справочнике (частота/оборот), даже
+	// Контрагент распознан — учитываем его в справочнике (частота/оборот), даже
 	// если операция уйдёт во «входящие».
 	if res.Matched && res.Merchant != "" {
 		_ = s.merchants.Observe(res.Merchant, res.Amount, receivedAt)
@@ -311,7 +311,7 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	return IngestOutcome{Matched: res.Matched, DraftID: d.ID}, nil
 }
 
-// smsNote формирует примечание операции из SMS: продавец, если захвачен, иначе
+// smsNote формирует примечание операции из SMS: контрагент, если захвачен, иначе
 // укороченный текст сообщения.
 func smsNote(merchant, rawText string) string {
 	if merchant != "" {
@@ -405,8 +405,8 @@ func (s *Service) ListDrafts(unresolvedOnly bool) ([]*Draft, error) {
 func (s *Service) DeleteDraft(id string) error { return s.drafts.Delete(id) }
 
 // ResolveDraft превращает черновик в операцию. Если rememberMerchant=true и у
-// черновика есть продавец — создаётся правило «продавец → категория», и будущие
-// SMS от этого продавца будут разноситься автоматически.
+// черновика есть контрагент — создаётся правило «контрагент → категория», и будущие
+// SMS от этого контрагента будут разноситься автоматически.
 func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Money, typeOverride core.EntryType, rememberMerchant bool) (*transaction.Transaction, error) {
 	d, err := s.drafts.Get(id)
 	if err != nil {
@@ -434,7 +434,7 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	if err := s.drafts.Save(d); err != nil {
 		return nil, err
 	}
-	// Запомнить продавца → категорию для будущих SMS.
+	// Запомнить контрагента → категорию для будущих SMS.
 	if rememberMerchant && d.Merchant != "" {
 		_, _ = s.CreateRule(d.Merchant, categoryID, 0)
 	}

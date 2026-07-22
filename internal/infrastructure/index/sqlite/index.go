@@ -181,7 +181,7 @@ var migrations = []migration{
 		},
 	},
 	{
-		// v3: захват названия продавца из SMS (номер regex-группы; 0 = не захватывать).
+		// v3: захват названия контрагента из SMS (номер regex-группы; 0 = не захватывать).
 		version: 3,
 		stmts: []string{
 			`ALTER TABLE sms_templates ADD COLUMN merchant_group INTEGER NOT NULL DEFAULT 0`,
@@ -211,12 +211,12 @@ var migrations = []migration{
 		},
 	},
 	{
-		// v5: правила авто-категоризации «продавец → категория».
+		// v5: правила авто-категоризации «контрагент → категория».
 		version: 5,
 		stmts: []string{
 			`CREATE TABLE IF NOT EXISTS category_rules(
 				id TEXT PRIMARY KEY,
-				pattern TEXT NOT NULL,                 -- подстрока продавца (без учёта регистра)
+				pattern TEXT NOT NULL,                 -- подстрока контрагента (без учёта регистра)
 				category_id TEXT NOT NULL REFERENCES categories(id),
 				priority INTEGER NOT NULL DEFAULT 0,
 				created_at TEXT NOT NULL
@@ -238,7 +238,7 @@ var migrations = []migration{
 			`ALTER TABLE plan_items ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 			`ALTER TABLE recurring_templates ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 			`ALTER TABLE inbox_drafts ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
-			// Правила «продавец → категория» — персональные (у каждого свои).
+			// Правила «контрагент → категория» — персональные (у каждого свои).
 			`ALTER TABLE category_rules ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 
 			// Бэкофилл: всё существующее — первому пользователю (админу).
@@ -266,7 +266,7 @@ var migrations = []migration{
 		},
 	},
 	{
-		// v7: справочник продавцов — авто-накопление из SMS (частота/оборот/дата).
+		// v7: справочник контрагентов — авто-накопление из SMS (частота/оборот/дата).
 		// Бэкофилл из уже разобранных входящих, чтобы список сразу был не пустой.
 		version: 7,
 		stmts: []string{
