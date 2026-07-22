@@ -16,7 +16,9 @@ type SampleSpec struct {
 	Name              string
 	Sender            string
 	Text              string
-	AmountText        string // выделенная сумма (обязательно)
+	Action            string // "operation" | "discard"
+	SignatureText     string // для discard: слово/фраза-признак мусора
+	AmountText        string // выделенная сумма (обязательно для operation)
 	CurrencyText      string // выделенная валюта ("" => FixedCurrency)
 	FixedCurrency     string
 	MerchantText      string // выделенный признак ("" => не захватывать)
@@ -37,12 +39,29 @@ var accountValueRe = regexp.MustCompile(`^[0-9*]+$`)
 // собранный шаблон извлекает из образца ровно выделенные значения.
 func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 	s := spec.Text
+	if strings.TrimSpace(spec.Name) == "" {
+		return nil, fmt.Errorf("sms: задайте название типа")
+	}
+
+	// Мусор: паттерн — литеральная фраза-признак; извлекать нечего.
+	if normalizeAction(spec.Action) == ActionDiscard {
+		sig := strings.TrimSpace(spec.SignatureText)
+		if sig == "" {
+			return nil, fmt.Errorf("sms: отметьте слово-признак мусора")
+		}
+		if !strings.Contains(s, sig) {
+			return nil, fmt.Errorf("sms: признак не найден в тексте")
+		}
+		return &Template{
+			Name: strings.TrimSpace(spec.Name), Sender: strings.TrimSpace(spec.Sender),
+			Pattern: regexp.QuoteMeta(sig), Action: ActionDiscard, Enabled: true,
+			Type: core.Expense,
+		}, nil
+	}
+
 	amountText := strings.TrimSpace(spec.AmountText)
 	if amountText == "" {
 		return nil, fmt.Errorf("sms: выделите сумму в сообщении")
-	}
-	if strings.TrimSpace(spec.Name) == "" {
-		return nil, fmt.Errorf("sms: задайте название шаблона")
 	}
 	aStart := strings.Index(s, amountText)
 	if aStart < 0 {
@@ -108,6 +127,7 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 	}
 	t := &Template{
 		Name: strings.TrimSpace(spec.Name), Sender: strings.TrimSpace(spec.Sender), Pattern: pattern,
+		Action:      ActionOperation,
 		AmountGroup: amountGroup, CurrencyGroup: currencyGroup, MerchantGroup: merchantGroup,
 		CaptureKind: normalizeKind(spec.CaptureKind), FixedCurrency: fixed,
 		Type: spec.Type, DefaultCategoryID: spec.DefaultCategoryID, Enabled: true,

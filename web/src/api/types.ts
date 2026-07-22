@@ -106,6 +106,7 @@ export interface SmsTemplate {
   name: string;
   sender: string;
   pattern: string;
+  action: SmsAction; // operation | discard
   amountGroup: number;
   currencyGroup: number;
   merchantGroup: number;
@@ -150,5 +151,8 @@ export interface InboxDraft {
   type?: EntryType;
   merchant?: string;
   templateId?: string;
+  status: string; // "pending" | "filtered"
   resolved: boolean;
 }
+
+export type SmsAction = "operation" | "discard";

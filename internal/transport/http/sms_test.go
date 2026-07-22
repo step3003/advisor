@@ -301,6 +301,68 @@ func TestSMSTemplateFromSample(t *testing.T) {
 	}
 }
 
+func TestSMSDiscardFlow(t *testing.T) {
+	s := newTestServer(t)
+
+	// Мусорное SMS (уведомление о балансе) → во «Входящие».
+	junk := "Dostupno 156.20 BYN na karte 4***2021"
+	_, body := do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": junk, "receivedAt": "2026-07-22",
+	}, true)
+	var ing map[string]any
+	mustJSON(t, body, &ing)
+	draftID, _ := ing["draftId"].(string)
+	if draftID == "" {
+		t.Fatalf("ожидался черновик, got %v", ing)
+	}
+
+	// Учим «это мусор»: признак — слово Dostupno.
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates/from-sample", map[string]any{
+		"draftId": draftID, "name": "Баланс-спам", "sender": "Priorbank",
+		"text": junk, "action": "discard", "signatureText": "Dostupno",
+	}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("from-sample discard: %d — %s", rec.Code, body)
+	}
+
+	// «Входящие» пусты, в архиве — 1.
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=pending", nil, true)
+	var pending []draftDTO
+	mustJSON(t, body, &pending)
+	if len(pending) != 0 {
+		t.Fatalf("Входящие должны опустеть, осталось %d", len(pending))
+	}
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=filtered", nil, true)
+	var filtered []draftDTO
+	mustJSON(t, body, &filtered)
+	if len(filtered) != 1 {
+		t.Fatalf("в архиве ожидалась 1 запись, got %d", len(filtered))
+	}
+
+	// Новое такое же SMS сразу летит в архив, не во «Входящие».
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": "Dostupno 42.00 BYN na karte 4***2021", "receivedAt": "2026-07-22",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=pending", nil, true)
+	mustJSON(t, body, &pending)
+	if len(pending) != 0 {
+		t.Fatalf("новый мусор не должен идти во Входящие, там %d", len(pending))
+	}
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=filtered", nil, true)
+	mustJSON(t, body, &filtered)
+	if len(filtered) != 2 {
+		t.Fatalf("в архиве ожидалось 2, got %d", len(filtered))
+	}
+
+	// Вернуть одно из архива во «Входящие».
+	do(t, s, http.MethodPost, "/api/inbox/"+filtered[0].ID+"/restore", nil, true)
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=pending", nil, true)
+	mustJSON(t, body, &pending)
+	if len(pending) != 1 {
+		t.Fatalf("после восстановления во Входящих ожидалась 1, got %d", len(pending))
+	}
+}
+
 func TestSMSAccountKindAndLabel(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",

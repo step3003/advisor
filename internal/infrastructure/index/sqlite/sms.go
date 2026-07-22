@@ -18,17 +18,17 @@ func (i *Index) SMSTemplates() *SMSTemplateRepo { return &SMSTemplateRepo{idx: i
 
 func (r *SMSTemplateRepo) Save(t *smssvc.Template) error {
 	_, err := r.idx.db.Exec(`INSERT INTO sms_templates(
-			id,name,sender,pattern,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,
+			id,name,sender,pattern,action,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,
 			default_category_id,enabled,priority,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
-			name=excluded.name, sender=excluded.sender, pattern=excluded.pattern,
+			name=excluded.name, sender=excluded.sender, pattern=excluded.pattern, action=excluded.action,
 			amount_group=excluded.amount_group, currency_group=excluded.currency_group,
 			merchant_group=excluded.merchant_group, capture_kind=excluded.capture_kind,
 			fixed_currency=excluded.fixed_currency, type=excluded.type,
 			default_category_id=excluded.default_category_id, enabled=excluded.enabled,
 			priority=excluded.priority`,
-		t.ID, t.Name, t.Sender, t.Pattern, t.AmountGroup, t.CurrencyGroup, t.MerchantGroup, t.CaptureKind, t.FixedCurrency,
+		t.ID, t.Name, t.Sender, t.Pattern, t.Action, t.AmountGroup, t.CurrencyGroup, t.MerchantGroup, t.CaptureKind, t.FixedCurrency,
 		string(t.Type), nullStr(t.DefaultCategoryID), boolToInt(t.Enabled), t.Priority,
 		t.CreatedAt.UTC().Format(rfc3339))
 	return err
@@ -52,7 +52,7 @@ func (r *SMSTemplateRepo) Delete(id string) error {
 	return err
 }
 
-const templateCols = `SELECT id,name,sender,pattern,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,default_category_id,enabled,priority,created_at FROM sms_templates`
+const templateCols = `SELECT id,name,sender,pattern,action,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,default_category_id,enabled,priority,created_at FROM sms_templates`
 
 func (r *SMSTemplateRepo) query(q string, args ...any) ([]*smssvc.Template, error) {
 	rows, err := r.idx.db.Query(q, args...)
@@ -77,7 +77,7 @@ func scanTemplate(sc scanner) (*smssvc.Template, error) {
 	var defCat sql.NullString
 	var enabled int
 	var created string
-	if err := sc.Scan(&t.ID, &t.Name, &t.Sender, &t.Pattern, &t.AmountGroup, &t.CurrencyGroup,
+	if err := sc.Scan(&t.ID, &t.Name, &t.Sender, &t.Pattern, &t.Action, &t.AmountGroup, &t.CurrencyGroup,
 		&t.MerchantGroup, &t.CaptureKind, &t.FixedCurrency, &typ, &defCat, &enabled, &t.Priority, &created); err != nil {
 		return nil, err
 	}
@@ -109,16 +109,20 @@ func (r *DraftRepo) Save(d *smssvc.Draft) error {
 	if d.ParsedType != "" {
 		ptype = sql.NullString{String: string(d.ParsedType), Valid: true}
 	}
+	status := d.Status
+	if status == "" {
+		status = smssvc.DraftPending
+	}
 	_, err := r.idx.db.Exec(`INSERT INTO inbox_drafts(
 			id,owner_id,source,raw_sender,raw_text,received_at,parsed_amount_minor,parsed_currency,
-			parsed_type,merchant,template_id,resolved,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+			parsed_type,merchant,template_id,status,resolved,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			parsed_amount_minor=excluded.parsed_amount_minor, parsed_currency=excluded.parsed_currency,
 			parsed_type=excluded.parsed_type, merchant=excluded.merchant,
-			template_id=excluded.template_id, resolved=excluded.resolved`,
+			template_id=excluded.template_id, status=excluded.status, resolved=excluded.resolved`,
 		d.ID, r.owner, d.Source, d.RawSender, d.RawText, d.ReceivedAt.String(), minor, cur, ptype,
-		d.Merchant, nullStr(d.TemplateID), boolToInt(d.Resolved), d.CreatedAt.UTC().Format(rfc3339))
+		d.Merchant, nullStr(d.TemplateID), status, boolToInt(d.Resolved), d.CreatedAt.UTC().Format(rfc3339))
 	return err
 }
 
@@ -127,13 +131,9 @@ func (r *DraftRepo) Get(id string) (*smssvc.Draft, error) {
 	return scanDraft(row)
 }
 
-func (r *DraftRepo) List(unresolvedOnly bool) ([]*smssvc.Draft, error) {
-	q := draftCols + ` WHERE owner_id=?`
-	if unresolvedOnly {
-		q += ` AND resolved=0`
-	}
-	q += ` ORDER BY received_at DESC, created_at DESC`
-	rows, err := r.idx.db.Query(q, r.owner)
+func (r *DraftRepo) List(status string) ([]*smssvc.Draft, error) {
+	q := draftCols + ` WHERE owner_id=? AND status=? AND resolved=0 ORDER BY received_at DESC, created_at DESC`
+	rows, err := r.idx.db.Query(q, r.owner, status)
 	if err != nil {
 		return nil, err
 	}
@@ -154,20 +154,21 @@ func (r *DraftRepo) Delete(id string) error {
 	return err
 }
 
-const draftCols = `SELECT id,source,raw_sender,raw_text,received_at,parsed_amount_minor,parsed_currency,parsed_type,merchant,template_id,resolved,created_at FROM inbox_drafts`
+const draftCols = `SELECT id,source,raw_sender,raw_text,received_at,parsed_amount_minor,parsed_currency,parsed_type,merchant,template_id,status,resolved,created_at FROM inbox_drafts`
 
 func scanDraft(sc scanner) (*smssvc.Draft, error) {
 	var d smssvc.Draft
-	var recv, created string
+	var recv, created, status string
 	var minor sql.NullInt64
 	var cur, ptype, tmpl sql.NullString
 	var merchant string
 	var resolved int
 	if err := sc.Scan(&d.ID, &d.Source, &d.RawSender, &d.RawText, &recv, &minor, &cur, &ptype,
-		&merchant, &tmpl, &resolved, &created); err != nil {
+		&merchant, &tmpl, &status, &resolved, &created); err != nil {
 		return nil, err
 	}
 	d.Merchant = merchant
+	d.Status = status
 	d.ReceivedAt, _ = core.ParseDate(recv)
 	if minor.Valid && cur.Valid {
 		m, err := money.New(minor.Int64, money.Currency(cur.String))

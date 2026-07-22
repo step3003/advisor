@@ -160,6 +160,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/sms/templates/{id}", s.handleDeleteSMSTemplate)
 	mux.HandleFunc("GET /api/inbox", s.handleListDrafts)
 	mux.HandleFunc("POST /api/inbox/{id}/resolve", s.handleResolveDraft)
+	mux.HandleFunc("POST /api/inbox/{id}/restore", s.handleRestoreDraft)
 	mux.HandleFunc("DELETE /api/inbox/{id}", s.handleDeleteDraft)
 
 	// Справочник контрагентов/счетов (авто-накопление из SMS) + привязка категории.

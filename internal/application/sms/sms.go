@@ -19,13 +19,27 @@ import (
 	"advisor/internal/domain/transaction"
 )
 
-// Template — настраиваемый шаблон разбора SMS.
+// Действие шаблона (тип сообщения).
+const (
+	ActionOperation = "operation" // создать операцию
+	ActionDiscard   = "discard"   // мусор — сложить в «Отфильтрованные»
+)
+
+func normalizeAction(a string) string {
+	if a == ActionDiscard {
+		return ActionDiscard
+	}
+	return ActionOperation
+}
+
+// Template — тип сообщения = настраиваемый шаблон разбора SMS.
 type Template struct {
 	ID                string
 	Name              string
 	Sender            string // подстрока отправителя (без учёта регистра); "" => любой
 	Pattern           string // regex по тексту SMS
-	AmountGroup       int    // номер группы суммы (>=1)
+	Action            string // "operation" | "discard"
+	AmountGroup       int    // номер группы суммы (>=1 для операции)
 	CurrencyGroup     int    // номер группы валюты; 0 => FixedCurrency
 	MerchantGroup     int    // номер группы признака (контрагент/счёт); 0 => не захватывать
 	CaptureKind       string // что ловит MerchantGroup: "merchant" (контрагент) | "account" (счёт)
@@ -37,7 +51,13 @@ type Template struct {
 	CreatedAt         time.Time
 }
 
-// Draft — нераспознанная или неотнесённая к категории входящая SMS.
+// Статус черновика.
+const (
+	DraftPending  = "pending"  // во «Входящих», ждёт разбора
+	DraftFiltered = "filtered" // отброшен шаблоном-мусором, лежит в архиве
+)
+
+// Draft — входящая SMS: нераспознанная (во «Входящих») либо отфильтрованная как мусор.
 type Draft struct {
 	ID           string
 	Source       string
@@ -47,7 +67,8 @@ type Draft struct {
 	ParsedAmount *money.Money // nil => распознать не удалось
 	ParsedType   core.EntryType
 	Merchant     string // контрагент, если захвачен шаблоном
-	TemplateID   string
+	TemplateID   string // шаблон, отфильтровавший сообщение (для мусора)
+	Status       string // "pending" | "filtered"
 	Resolved     bool
 	CreatedAt    time.Time
 }
@@ -61,6 +82,7 @@ type ParseResult struct {
 	Type              core.EntryType
 	Merchant          string // захваченный признак (контрагент или счёт), если есть
 	Kind              string // тип признака: "merchant" | "account" (из шаблона)
+	Action            string // "operation" | "discard" (из шаблона)
 	DefaultCategoryID string
 }
 
@@ -73,11 +95,11 @@ type TemplateRepo interface {
 	Delete(id string) error
 }
 
-// DraftRepo — хранилище входящих черновиков.
+// DraftRepo — хранилище входящих/отфильтрованных черновиков.
 type DraftRepo interface {
 	Save(d *Draft) error
 	Get(id string) (*Draft, error)
-	List(unresolvedOnly bool) ([]*Draft, error)
+	List(status string) ([]*Draft, error) // status: "pending" | "filtered"
 	Delete(id string) error
 }
 
@@ -215,7 +237,9 @@ func (s *Service) CreateTemplateFromSample(spec SampleSpec, categoryID, draftID 
 	txID := ""
 	if draftID != "" {
 		if d, err := s.drafts.Get(draftID); err == nil {
-			if out, err := s.Ingest(d.RawSender, d.RawText, d.ReceivedAt); err == nil && out.TransactionID != "" {
+			// Переразбираем это же сообщение новым шаблоном (операция или в архив) и
+			// убираем исходный черновик — его заменяет результат переразбора.
+			if out, err := s.Ingest(d.RawSender, d.RawText, d.ReceivedAt); err == nil {
 				txID = out.TransactionID
 				_ = s.drafts.Delete(draftID)
 			}
@@ -234,6 +258,10 @@ func validateTemplate(t *Template) error {
 	if _, err := regexp.Compile(t.Pattern); err != nil {
 		return fmt.Errorf("sms: некорректный regex: %w", err)
 	}
+	t.Action = normalizeAction(t.Action)
+	if t.Action == ActionDiscard {
+		return nil // мусор — извлекать нечего
+	}
 	if t.AmountGroup < 1 {
 		return fmt.Errorf("sms: номер группы суммы должен быть ≥ 1")
 	}
@@ -251,8 +279,9 @@ func validateTemplate(t *Template) error {
 // IngestOutcome — что произошло при приёме SMS.
 type IngestOutcome struct {
 	Matched       bool
+	Filtered      bool   // true => сообщение отброшено шаблоном-мусором
 	TransactionID string // не пусто => создана операция
-	DraftID       string // не пусто => создан черновик (нужен ручной разбор)
+	DraftID       string // не пусто => создан черновик (входящее или отфильтрованное)
 }
 
 // Ingest принимает сырое SMS: парсит по шаблонам и либо создаёт операцию (если
@@ -265,6 +294,19 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	res, err := parseWith(tmpls, sender, text)
 	if err != nil {
 		return IngestOutcome{}, err
+	}
+
+	// Совпал шаблон-мусор — складываем в архив «Отфильтрованные», не создаём операцию.
+	if res.Matched && res.Action == ActionDiscard {
+		d := &Draft{
+			ID: s.ids.NewID(), Source: "sms", RawSender: sender, RawText: text,
+			ReceivedAt: receivedAt, TemplateID: res.TemplateID, Status: DraftFiltered,
+			CreatedAt: s.clock.Now().UTC(),
+		}
+		if err := s.drafts.Save(d); err != nil {
+			return IngestOutcome{}, err
+		}
+		return IngestOutcome{Matched: true, Filtered: true, DraftID: d.ID}, nil
 	}
 
 	// Признак распознан — учитываем его в строгом списке (частота/оборот), тип из
@@ -300,6 +342,7 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		RawText:    text,
 		ReceivedAt: receivedAt,
 		TemplateID: res.TemplateID,
+		Status:     DraftPending,
 		CreatedAt:  s.clock.Now().UTC(),
 	}
 	if res.Matched {
@@ -345,7 +388,17 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 			continue // некорректный шаблон — пропускаем
 		}
 		m := re.FindStringSubmatch(text)
-		if m == nil || t.AmountGroup >= len(m) {
+		if m == nil {
+			continue
+		}
+		// Шаблон-мусор: достаточно совпадения паттерна, извлекать нечего.
+		if normalizeAction(t.Action) == ActionDiscard {
+			return ParseResult{
+				Matched: true, Action: ActionDiscard,
+				TemplateID: t.ID, TemplateName: t.Name,
+			}, nil
+		}
+		if t.AmountGroup >= len(m) {
 			continue
 		}
 		cur := strings.TrimSpace(t.FixedCurrency)
@@ -370,6 +423,7 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 		}
 		return ParseResult{
 			Matched:           true,
+			Action:            ActionOperation,
 			TemplateID:        t.ID,
 			TemplateName:      t.Name,
 			Amount:            amt,
@@ -403,13 +457,30 @@ func normalizeAmount(s string) string {
 	return s
 }
 
-// --- Входящие (drafts) ---
+// --- Входящие и отфильтрованные (drafts) ---
 
-func (s *Service) ListDrafts(unresolvedOnly bool) ([]*Draft, error) {
-	return s.drafts.List(unresolvedOnly)
+// ListDrafts возвращает черновики по статусу ("pending" — «Входящие»,
+// "filtered" — архив мусора). Пустой статус => "pending".
+func (s *Service) ListDrafts(status string) ([]*Draft, error) {
+	if status == "" {
+		status = DraftPending
+	}
+	return s.drafts.List(status)
 }
 
 func (s *Service) DeleteDraft(id string) error { return s.drafts.Delete(id) }
+
+// RestoreDraft возвращает отфильтрованное сообщение во «Входящие» (если фильтр
+// поймал лишнее).
+func (s *Service) RestoreDraft(id string) error {
+	d, err := s.drafts.Get(id)
+	if err != nil {
+		return err
+	}
+	d.Status = DraftPending
+	d.TemplateID = ""
+	return s.drafts.Save(d)
+}
 
 // ResolveDraft превращает черновик в операцию. Если rememberMerchant=true и у
 // черновика есть контрагент — категория закрепляется прямо за контрагентом

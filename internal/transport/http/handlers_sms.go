@@ -15,6 +15,7 @@ type smsTemplateDTO struct {
 	Name              string `json:"name"`
 	Sender            string `json:"sender"`
 	Pattern           string `json:"pattern"`
+	Action            string `json:"action"` // "operation" | "discard"
 	AmountGroup       int    `json:"amountGroup"`
 	CurrencyGroup     int    `json:"currencyGroup"`
 	MerchantGroup     int    `json:"merchantGroup"`
@@ -28,7 +29,7 @@ type smsTemplateDTO struct {
 
 func toSMSTemplateDTO(t *smssvc.Template) smsTemplateDTO {
 	return smsTemplateDTO{
-		ID: t.ID, Name: t.Name, Sender: t.Sender, Pattern: t.Pattern,
+		ID: t.ID, Name: t.Name, Sender: t.Sender, Pattern: t.Pattern, Action: t.Action,
 		AmountGroup: t.AmountGroup, CurrencyGroup: t.CurrencyGroup, MerchantGroup: t.MerchantGroup,
 		CaptureKind: t.CaptureKind, FixedCurrency: t.FixedCurrency, Type: string(t.Type),
 		DefaultCategoryID: t.DefaultCategoryID, Enabled: t.Enabled, Priority: t.Priority,
@@ -37,7 +38,7 @@ func toSMSTemplateDTO(t *smssvc.Template) smsTemplateDTO {
 
 func (d smsTemplateDTO) toTemplate() *smssvc.Template {
 	return &smssvc.Template{
-		Name: d.Name, Sender: d.Sender, Pattern: d.Pattern,
+		Name: d.Name, Sender: d.Sender, Pattern: d.Pattern, Action: d.Action,
 		AmountGroup: d.AmountGroup, CurrencyGroup: d.CurrencyGroup, MerchantGroup: d.MerchantGroup,
 		CaptureKind: d.CaptureKind, FixedCurrency: d.FixedCurrency, Type: core.EntryType(d.Type),
 		DefaultCategoryID: d.DefaultCategoryID, Enabled: d.Enabled, Priority: d.Priority,
@@ -53,6 +54,7 @@ type draftDTO struct {
 	Type       string    `json:"type,omitempty"`
 	Merchant   string    `json:"merchant,omitempty"`
 	TemplateID string    `json:"templateId,omitempty"`
+	Status     string    `json:"status"`
 	Resolved   bool      `json:"resolved"`
 }
 
@@ -60,7 +62,7 @@ func toDraftDTO(d *smssvc.Draft) draftDTO {
 	out := draftDTO{
 		ID: d.ID, RawSender: d.RawSender, RawText: d.RawText,
 		ReceivedAt: d.ReceivedAt.String(), Type: string(d.ParsedType),
-		Merchant: d.Merchant, TemplateID: d.TemplateID, Resolved: d.Resolved,
+		Merchant: d.Merchant, TemplateID: d.TemplateID, Status: d.Status, Resolved: d.Resolved,
 	}
 	if d.ParsedAmount != nil {
 		m := toMoney(*d.ParsedAmount)
@@ -173,6 +175,8 @@ type fromSampleReq struct {
 	Name          string `json:"name"`
 	Sender        string `json:"sender"`
 	Text          string `json:"text"`
+	Action        string `json:"action"`        // "operation" | "discard"
+	SignatureText string `json:"signatureText"` // для discard: слово-признак мусора
 	AmountText    string `json:"amountText"`
 	CurrencyText  string `json:"currencyText"`
 	FixedCurrency string `json:"fixedCurrency"`
@@ -194,6 +198,7 @@ func (s *Server) handleTemplateFromSample(w http.ResponseWriter, r *http.Request
 	}
 	spec := smssvc.SampleSpec{
 		Name: req.Name, Sender: req.Sender, Text: req.Text,
+		Action: req.Action, SignatureText: req.SignatureText,
 		AmountText: req.AmountText, CurrencyText: req.CurrencyText, FixedCurrency: req.FixedCurrency,
 		MerchantText: req.MerchantText, CaptureKind: req.CaptureKind, Type: core.EntryType(req.Type),
 	}
@@ -208,8 +213,8 @@ func (s *Server) handleTemplateFromSample(w http.ResponseWriter, r *http.Request
 // --- Входящие черновики ---
 
 func (s *Server) handleListDrafts(w http.ResponseWriter, r *http.Request) {
-	unresolvedOnly := queryTrim(r, "unresolvedOnly") == "true"
-	drafts, err := s.user(r).SMS.ListDrafts(unresolvedOnly)
+	// status: "pending" (по умолчанию, «Входящие») | "filtered" (архив мусора).
+	drafts, err := s.user(r).SMS.ListDrafts(queryTrim(r, "status"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -219,6 +224,14 @@ func (s *Server) handleListDrafts(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toDraftDTO(d))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleRestoreDraft(w http.ResponseWriter, r *http.Request) {
+	if err := s.user(r).SMS.RestoreDraft(r.PathValue("id")); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type resolveDraftReq struct {

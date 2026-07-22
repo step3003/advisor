@@ -330,6 +330,15 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS ix_tx_merchant ON transactions(owner_id, merchant_key)`,
 		},
 	},
+	{
+		// v11: действие шаблона (operation|discard) и статус черновика
+		// (pending|filtered) — фильтрация мусора в отдельный архив.
+		version: 11,
+		stmts: []string{
+			`ALTER TABLE sms_templates ADD COLUMN action TEXT NOT NULL DEFAULT 'operation'`,
+			`ALTER TABLE inbox_drafts ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
+  Badge,
   Box,
   Button,
   Card,
@@ -22,7 +23,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconChevronDown, IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconChevronDown, IconEdit, IconTrash } from "@tabler/icons-react";
 
 import {
   assignMerchant,
@@ -34,12 +35,12 @@ import {
   listMerchants,
   listSmsTemplates,
   resolveDraft,
+  restoreDraft,
   updateSmsTemplate,
 } from "../api/client";
-import type { EntryType, InboxDraft, Merchant, Money, SignalKind, SmsTemplate } from "../api/types";
+import type { EntryType, InboxDraft, Merchant, Money, SignalKind, SmsAction, SmsTemplate } from "../api/types";
 import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
-import { useCategories } from "../state/categories";
 import { useCurrencies } from "../state/currencies";
 import { useMe } from "../state/me";
 import { notifyError, notifyOk } from "../lib/notify";
@@ -49,6 +50,7 @@ const EMPTY: Omit<SmsTemplate, "id"> = {
   name: "",
   sender: "",
   pattern: "",
+  action: "operation",
   amountGroup: 1,
   currencyGroup: 0,
   merchantGroup: 0,
@@ -61,12 +63,13 @@ const EMPTY: Omit<SmsTemplate, "id"> = {
 };
 
 export function SmsPage() {
-  const { displayName } = useCategories();
   const { isAdmin } = useMe();
   const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [drafts, setDrafts] = useState<InboxDraft[]>([]);
+  const [filtered, setFiltered] = useState<InboxDraft[]>([]);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
-  const [advanced, setAdvanced] = useState(false); // раскрыть шаблоны (продвинутое)
+  const [advanced, setAdvanced] = useState(false); // раскрыть шаблоны (типы сообщений)
+  const [showFiltered, setShowFiltered] = useState(false);
 
   const [tplOpened, tpl] = useDisclosure(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -82,24 +85,24 @@ export function SmsPage() {
 
   async function load() {
     try {
-      const [t, d, ms] = await Promise.all([listSmsTemplates(), listInbox(true), listMerchants()]);
+      const [t, d, f, ms] = await Promise.all([
+        listSmsTemplates(), listInbox("pending"), listInbox("filtered"), listMerchants(),
+      ]);
       setTemplates(t);
       setDrafts(d);
+      setFiltered(f);
       setMerchants(ms);
     } catch (e) {
       notifyError(e);
     }
   }
 
+  const tplName = (id?: string) => templates.find((t) => t.id === id)?.name ?? "—";
+
   useEffect(() => {
     void load();
   }, []);
 
-  function openNew() {
-    setEditingId(null);
-    setForm(EMPTY);
-    tpl.open();
-  }
   function openEdit(t: SmsTemplate) {
     setEditingId(t.id);
     const { id: _id, ...rest } = t;
@@ -188,32 +191,69 @@ export function SmsPage() {
         </Table>
       </Card>
 
+      {/* Отфильтрованные (архив мусора) — свёрнуто */}
+      <Card withBorder padding="md">
+        <Group justify="space-between" style={{ cursor: "pointer" }} onClick={() => setShowFiltered((v) => !v)}>
+          <Title order={5}>Отфильтрованные <Text span size="xs" c="dimmed">({filtered.length})</Text></Title>
+          <IconChevronDown size={18} style={{ transform: showFiltered ? "rotate(180deg)" : undefined, transition: "transform .15s" }} />
+        </Group>
+        <Collapse in={showFiltered}>
+          <Text size="sm" c="dimmed" mt="sm" mb="sm">
+            Сообщения, отброшенные шаблонами-мусором (баланс, коды и т.п.). Не удалены — на случай,
+            если фильтр поймал лишнее: тогда «Вернуть» отправит сообщение обратно во «Входящие».
+          </Text>
+          <Table striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Дата</Table.Th>
+                <Table.Th>Текст</Table.Th>
+                <Table.Th>Отфильтровано типом</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {filtered.map((d) => (
+                <Table.Tr key={d.id}>
+                  <Table.Td>{d.receivedAt}</Table.Td>
+                  <Table.Td><Text size="sm" lineClamp={2} maw={280}>{d.rawText}</Text></Table.Td>
+                  <Table.Td><Badge variant="light" color="gray">{tplName(d.templateId)}</Badge></Table.Td>
+                  <Table.Td>
+                    <Group gap={4} justify="flex-end" wrap="nowrap">
+                      <Button size="xs" variant="subtle" onClick={async () => { await restoreDraft(d.id); void load(); }}>Вернуть</Button>
+                      <ActionIcon variant="subtle" color="red" onClick={async () => { await deleteDraft(d.id); void load(); }}><IconTrash size={16} /></ActionIcon>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {filtered.length === 0 && (
+                <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Пока ничего не отфильтровано.</Text></Table.Td></Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </Collapse>
+      </Card>
+
       {/* Справочник контрагентов и счетов */}
       <MerchantsCard merchants={merchants} onChange={load} />
 
       {/* Шаблоны — продвинутое, свёрнуто */}
       <Card withBorder padding="md">
         <Group justify="space-between" style={{ cursor: "pointer" }} onClick={() => setAdvanced((v) => !v)}>
-          <Title order={5}>Шаблоны разбора <Text span size="xs" c="dimmed">(продвинутое)</Text></Title>
+          <Title order={5}>Типы сообщений <Text span size="xs" c="dimmed">({templates.length})</Text></Title>
           <IconChevronDown size={18} style={{ transform: advanced ? "rotate(180deg)" : undefined, transition: "transform .15s" }} />
         </Group>
         <Collapse in={advanced}>
           <Text size="sm" c="dimmed" mt="sm">
-            Шаблоны собираются сами при разборе «по образцу». Здесь их можно посмотреть, поправить
-            regex вручную (для банков с «плавающим» текстом) или удалить.
+            Типы (шаблоны) создаются сами при разборе «по образцу». Операция — извлекает сумму/контрагента;
+            мусор — отбрасывает сообщение. Здесь можно посмотреть, поправить regex вручную или удалить.
           </Text>
-          {isAdmin && (
-            <Group justify="flex-end" my="sm">
-              <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={openNew}>Новый шаблон вручную</Button>
-            </Group>
-          )}
-          <Table striped>
+          <Table striped mt="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Название</Table.Th>
+                <Table.Th>Действие</Table.Th>
                 <Table.Th>Отправитель</Table.Th>
-                <Table.Th>Тип</Table.Th>
-                <Table.Th>Категория</Table.Th>
+                <Table.Th>Признак</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -221,9 +261,17 @@ export function SmsPage() {
               {templates.map((t) => (
                 <Table.Tr key={t.id}>
                   <Table.Td>{t.name}</Table.Td>
+                  <Table.Td>
+                    {t.action === "discard"
+                      ? <Badge color="gray" variant="light">выкидывать</Badge>
+                      : <Badge color="blue" variant="light">операция</Badge>}
+                  </Table.Td>
                   <Table.Td>{t.sender || "любой"}</Table.Td>
-                  <Table.Td>{t.type === "income" ? "Доход" : "Расход"}</Table.Td>
-                  <Table.Td>{t.defaultCategoryId ? displayName(t.defaultCategoryId) : <Text c="dimmed" size="sm">по контрагенту</Text>}</Table.Td>
+                  <Table.Td>
+                    {t.action === "discard" ? <Text c="dimmed" size="sm">—</Text>
+                      : t.merchantGroup > 0 ? (t.captureKind === "account" ? "счёт" : "контрагент")
+                      : <Text c="dimmed" size="sm">нет</Text>}
+                  </Table.Td>
                   <Table.Td>
                     {isAdmin && (
                       <Group gap={2} justify="flex-end" wrap="nowrap">
@@ -235,7 +283,7 @@ export function SmsPage() {
                 </Table.Tr>
               ))}
               {templates.length === 0 && (
-                <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Шаблонов пока нет.</Text></Table.Td></Table.Tr>
+                <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Типов пока нет — создай первый через «Разобрать» во Входящих.</Text></Table.Td></Table.Tr>
               )}
             </Table.Tbody>
           </Table>
@@ -501,12 +549,13 @@ function tokenize(s: string): Tok[] {
 
 const ROLE_COLOR: Record<TeachRole, string> = { amount: "blue", currency: "teal", merchant: "grape" };
 
-// TeachModal — учим разбор на реальном SMS: тыкаем в слова, отмечая сумму/валюту/
-// признак; система собирает regex-шаблон и сразу создаёт операцию.
+// TeachModal — учим разбор на реальном SMS: выбираем действие (операция/мусор),
+// тыкаем в слова, отмечая поля/признак-мусора; система собирает шаблон.
 function TeachModal({ opened, onClose, draft, onDone }: {
   opened: boolean; onClose: () => void; draft: InboxDraft; onDone: () => void;
 }) {
   const tokens = useMemo(() => tokenize(draft.rawText), [draft.rawText]);
+  const [action, setAction] = useState<SmsAction>("operation");
   const [role, setRole] = useState<TeachRole>("amount");
   const [amountI, setAmountI] = useState<number | null>(null);
   const [currI, setCurrI] = useState<number | null>(null);
@@ -514,54 +563,81 @@ function TeachModal({ opened, onClose, draft, onDone }: {
   const [kind, setKind] = useState<SignalKind>("merchant");
   const [type, setType] = useState<EntryType>(draft.type ?? "expense");
   const [catId, setCatId] = useState<string | null>(null);
-  const [name, setName] = useState(draft.rawSender || "Новый шаблон");
+  const [name, setName] = useState(draft.rawSender || "Новый тип");
+
+  const discard = action === "discard";
 
   function click(i: number) {
-    if (role === "amount") setAmountI((p) => (p === i ? null : i));
-    else if (role === "currency") setCurrI((p) => (p === i ? null : i));
-    else setMerchIs((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i].sort((a, b) => a - b)));
+    if (discard || role === "merchant") {
+      setMerchIs((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i].sort((a, b) => a - b)));
+    } else if (role === "amount") setAmountI((p) => (p === i ? null : i));
+    else setCurrI((p) => (p === i ? null : i));
   }
   function roleOf(i: number): TeachRole | null {
-    if (i === amountI) return "amount";
-    if (i === currI) return "currency";
+    if (!discard && i === amountI) return "amount";
+    if (!discard && i === currI) return "currency";
     if (merchIs.includes(i)) return "merchant";
     return null;
   }
 
   const amountText = amountI != null ? tokens[amountI].text : "";
   const currencyText = currI != null ? tokens[currI].text : "";
-  const merchantText = merchIs.length
+  const marked = merchIs.length
     ? draft.rawText.slice(tokens[merchIs[0]].start, tokens[merchIs[merchIs.length - 1]].end)
     : "";
 
   async function save() {
-    if (!amountText) { notifyError(new Error("Отметьте сумму")); return; }
-    if (!catId) { notifyError(new Error("Выберите категорию")); return; }
+    if (!name.trim()) { notifyError(new Error("Задайте название типа")); return; }
     try {
+      if (discard) {
+        if (!marked) { notifyError(new Error("Отметьте слово-признак мусора")); return; }
+        await createTemplateFromSample({
+          draftId: draft.id, name, sender: draft.rawSender, text: draft.rawText,
+          action: "discard", signatureText: marked,
+          amountText: "", currencyText: "", fixedCurrency: "", merchantText: "", captureKind: kind,
+          type, categoryId: "",
+        });
+        onDone();
+        notifyOk("Тип-фильтр создан, сообщение в архиве");
+        return;
+      }
+      if (!amountText) { notifyError(new Error("Отметьте сумму")); return; }
+      if (!catId) { notifyError(new Error("Выберите категорию")); return; }
       const res = await createTemplateFromSample({
         draftId: draft.id, name, sender: draft.rawSender, text: draft.rawText,
+        action: "operation",
         amountText, currencyText, fixedCurrency: currencyText ? "" : "BYN",
-        merchantText, captureKind: kind, type, categoryId: catId,
+        merchantText: marked, captureKind: kind, type, categoryId: catId,
       });
       onDone();
-      notifyOk(res.transactionId ? "Шаблон создан, операция добавлена" : "Шаблон создан");
+      notifyOk(res.transactionId ? "Тип создан, операция добавлена" : "Тип создан");
     } catch (e) {
       notifyError(e);
     }
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Шаблон по образцу" size="lg">
+    <Modal opened={opened} onClose={onClose} title="Новый тип по образцу" size="lg">
       <Stack gap="sm">
+        <SegmentedControl
+          value={action}
+          onChange={(v) => setAction(v as SmsAction)}
+          data={[{ label: "Создать операцию", value: "operation" }, { label: "Это мусор (выкидывать)", value: "discard" }]}
+          fullWidth
+        />
         <Text size="sm" c="dimmed">
-          Выбери роль ниже, затем ткни в нужные слова сообщения. Признак (контрагент или счёт)
-          можно собрать из нескольких соседних слов.
+          {discard
+            ? "Отметь слово-признак, по которому узнавать такой мусор (напр. «Dostupno», «Balance»)."
+            : "Выбери роль ниже, затем ткни в нужные слова. Признак (контрагент/счёт) можно из нескольких слов."}
         </Text>
-        <Group gap="xs">
-          <Button size="xs" variant={role === "amount" ? "filled" : "light"} color="blue" onClick={() => setRole("amount")}>Сумма</Button>
-          <Button size="xs" variant={role === "currency" ? "filled" : "light"} color="teal" onClick={() => setRole("currency")}>Валюта</Button>
-          <Button size="xs" variant={role === "merchant" ? "filled" : "light"} color="grape" onClick={() => setRole("merchant")}>Контрагент / счёт</Button>
-        </Group>
+
+        {!discard && (
+          <Group gap="xs">
+            <Button size="xs" variant={role === "amount" ? "filled" : "light"} color="blue" onClick={() => setRole("amount")}>Сумма</Button>
+            <Button size="xs" variant={role === "currency" ? "filled" : "light"} color="teal" onClick={() => setRole("currency")}>Валюта</Button>
+            <Button size="xs" variant={role === "merchant" ? "filled" : "light"} color="grape" onClick={() => setRole("merchant")}>Контрагент / счёт</Button>
+          </Group>
+        )}
 
         <Box style={{ lineHeight: 2.2, padding: 8, border: "1px solid var(--mantine-color-default-border)", borderRadius: 6 }}>
           {tokens.map((tok, i) => {
@@ -583,39 +659,44 @@ function TeachModal({ opened, onClose, draft, onDone }: {
           })}
         </Box>
 
-        <Group gap="lg" wrap="wrap">
-          <Text size="sm"><b>Сумма:</b> {amountText || "—"}</Text>
-          <Text size="sm"><b>Валюта:</b> {currencyText || "BYN (по умолч.)"}</Text>
-          <Text size="sm"><b>{kind === "account" ? "Счёт" : "Контрагент"}:</b> {merchantText || "—"}</Text>
-        </Group>
-
-        {merchantText && (
-          <SegmentedControl
-            size="xs"
-            value={kind}
-            onChange={(v) => setKind(v as SignalKind)}
-            data={[{ label: "Это контрагент", value: "merchant" }, { label: "Это счёт", value: "account" }]}
-          />
+        {discard ? (
+          <Text size="sm"><b>Признак мусора:</b> {marked || "—"}</Text>
+        ) : (
+          <>
+            <Group gap="lg" wrap="wrap">
+              <Text size="sm"><b>Сумма:</b> {amountText || "—"}</Text>
+              <Text size="sm"><b>Валюта:</b> {currencyText || "BYN (по умолч.)"}</Text>
+              <Text size="sm"><b>{kind === "account" ? "Счёт" : "Контрагент"}:</b> {marked || "—"}</Text>
+            </Group>
+            {marked && (
+              <SegmentedControl
+                size="xs"
+                value={kind}
+                onChange={(v) => setKind(v as SignalKind)}
+                data={[{ label: "Это контрагент", value: "merchant" }, { label: "Это счёт", value: "account" }]}
+              />
+            )}
+            <SegmentedControl
+              value={type}
+              onChange={(v) => { setType(v as EntryType); setCatId(null); }}
+              data={[{ label: "Расход", value: "expense" }, { label: "Доход", value: "income" }]}
+              fullWidth
+            />
+            <CategorySelect
+              type={type}
+              value={catId}
+              onChange={setCatId}
+              required
+              label={marked ? "Категория для этого контрагента/счёта" : "Категория для всех таких сообщений"}
+            />
+          </>
         )}
 
-        <TextInput label="Название шаблона" value={name} onChange={(e) => setName(e.currentTarget.value)} />
-        <SegmentedControl
-          value={type}
-          onChange={(v) => { setType(v as EntryType); setCatId(null); }}
-          data={[{ label: "Расход", value: "expense" }, { label: "Доход", value: "income" }]}
-          fullWidth
-        />
-        <CategorySelect
-          type={type}
-          value={catId}
-          onChange={setCatId}
-          required
-          label={merchantText ? "Категория для этого контрагента/счёта" : "Категория для всех таких сообщений"}
-        />
+        <TextInput label="Название типа" value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Отмена</Button>
-          <Button onClick={save}>Создать шаблон</Button>
+          <Button onClick={save}>{discard ? "Создать фильтр" : "Создать тип"}</Button>
         </Group>
       </Stack>
     </Modal>

@@ -162,9 +162,11 @@ export const updateSmsTemplate = (id: string, t: SmsTemplateInput) =>
   req<SmsTemplate>("PATCH", `/api/sms/templates/${id}`, t);
 export const deleteSmsTemplate = (id: string) =>
   req<void>("DELETE", `/api/sms/templates/${id}`);
-// --- Входящие (черновики) ---
-export const listInbox = (unresolvedOnly = true) =>
-  req<InboxDraft[]>("GET", `/api/inbox?unresolvedOnly=${unresolvedOnly}`);
+// --- Входящие и отфильтрованные (черновики) ---
+export const listInbox = (status: "pending" | "filtered" = "pending") =>
+  req<InboxDraft[]>("GET", `/api/inbox?status=${status}`);
+export const restoreDraft = (id: string) =>
+  req<void>("POST", `/api/inbox/${id}/restore`);
 export const resolveDraft = (
   id: string,
   categoryId: string,
@@ -181,6 +183,8 @@ export interface FromSampleReq {
   name: string;
   sender: string;
   text: string;
+  action: string; // "operation" | "discard"
+  signatureText?: string;
   amountText: string;
   currencyText: string;
   fixedCurrency: string;
