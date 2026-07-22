@@ -119,15 +119,6 @@ export interface SmsTemplate {
 
 export type SignalKind = "merchant" | "account";
 
-export interface SmsTestResult {
-  matched: boolean;
-  templateName?: string;
-  amount?: Money;
-  type?: EntryType;
-  merchant?: string;
-  defaultCategoryId?: string;
-}
-
 export interface Me {
   username: string;
   role: string;
@@ -138,13 +129,6 @@ export interface AdminUser {
   id: string;
   username: string;
   role: string;
-}
-
-export interface CategoryRule {
-  id: string;
-  pattern: string;
-  categoryId: string;
-  priority: number;
 }
 
 export interface Merchant {

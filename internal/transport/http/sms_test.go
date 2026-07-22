@@ -31,16 +31,7 @@ func TestSMSParsingFlow(t *testing.T) {
 		t.Fatalf("create template: %d — %s", rec.Code, body)
 	}
 
-	// 3. Тест-эндпоинт: разбор без сохранения.
-	rec, body = do(t, s, http.MethodPost, "/api/sms/test",
-		testSMSReq{Sender: "Priorbank", Text: "Oplata 45,20 BYN v EUROOPT"}, true)
-	var test map[string]any
-	mustJSON(t, body, &test)
-	if test["matched"] != true {
-		t.Fatalf("test: ожидался matched=true, got %v", test)
-	}
-
-	// 4. Приём SMS от форвардера → создаётся операция.
+	// 3. Приём SMS от форвардера → создаётся операция.
 	rec, body = do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
 		"sender": "Priorbank", "text": "Oplata 45,20 BYN v EUROOPT", "receivedAt": "2026-07-15",
 	}, true)
@@ -117,47 +108,6 @@ func TestSMSCurrencyGuard(t *testing.T) {
 	// Валюта должна быть BYN (а не "14.70"), сумма — 14.70.
 	if txs[0].Amount.Currency != "BYN" || txs[0].Amount.Amount != "14.70" {
 		t.Fatalf("ожидалось 14.70 BYN, got %s %s", txs[0].Amount.Amount, txs[0].Amount.Currency)
-	}
-}
-
-func TestSMSMerchantRule(t *testing.T) {
-	s := newTestServer(t)
-	_, body := do(t, s, http.MethodPost, "/api/categories",
-		createCategoryReq{Name: "Такси", Type: "expense"}, true)
-	var taxi categoryDTO
-	mustJSON(t, body, &taxi)
-
-	// Правило: контрагент содержит "YANDEX" → категория Такси.
-	rec, body := do(t, s, http.MethodPost, "/api/sms/rules",
-		ruleDTO{Pattern: "YANDEX", CategoryID: taxi.ID}, true)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create rule: %d — %s", rec.Code, body)
-	}
-
-	// Шаблон БЕЗ категории, но с захватом контрагента.
-	tmpl := smsTemplateDTO{
-		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
-		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
-	}
-	rec, body = do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create template: %d — %s", rec.Code, body)
-	}
-
-	// Приходит SMS от Yandex Go — правило должно авто-разнести в Такси.
-	rec, body = do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
-		"sender": "Bank", "text": "Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN", "receivedAt": "2026-07-21",
-	}, true)
-	var out map[string]any
-	mustJSON(t, body, &out)
-	if out["matched"] != true || out["transactionId"] == "" {
-		t.Fatalf("ожидалась авто-операция по правилу, got %v", out)
-	}
-	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
-	var txs []transactionDTO
-	mustJSON(t, body, &txs)
-	if len(txs) != 1 || txs[0].CategoryID != taxi.ID || txs[0].Amount.Amount != "14.70" {
-		t.Fatalf("ожидалась операция 14.70 в Такси, got %+v", txs)
 	}
 }
 
@@ -474,15 +424,6 @@ func TestSMSMerchantCapture(t *testing.T) {
 	}
 
 	real := "Karta 4***2021 20-07-26 19:08:53. Oplata 14.90 BYN. BLR PRIRODNAYA ZAPRA. Balance: 18.51 BYN Tel. 7299090"
-
-	// Тест-эндпоинт должен вернуть контрагента.
-	_, body = do(t, s, http.MethodPost, "/api/sms/test",
-		testSMSReq{Text: real}, true)
-	var test map[string]any
-	mustJSON(t, body, &test)
-	if test["merchant"] != "PRIRODNAYA ZAPRA" {
-		t.Fatalf("тест: ожидался контрагент PRIRODNAYA ZAPRA, got %v", test["merchant"])
-	}
 
 	// Ingest создаёт операцию, контрагент — в примечании.
 	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{

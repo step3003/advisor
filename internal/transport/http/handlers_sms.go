@@ -205,33 +205,6 @@ func (s *Server) handleTemplateFromSample(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"template": toSMSTemplateDTO(t), "transactionId": txID})
 }
 
-type testSMSReq struct {
-	Sender string `json:"sender"`
-	Text   string `json:"text"`
-}
-
-func (s *Server) handleTestSMS(w http.ResponseWriter, r *http.Request) {
-	var req testSMSReq
-	if err := readJSON(r, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	res, err := s.user(r).SMS.Test(req.Sender, req.Text)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := map[string]any{"matched": res.Matched}
-	if res.Matched {
-		out["templateName"] = res.TemplateName
-		out["amount"] = toMoney(res.Amount)
-		out["type"] = string(res.Type)
-		out["merchant"] = res.Merchant
-		out["defaultCategoryId"] = res.DefaultCategoryID
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
 // --- Входящие черновики ---
 
 func (s *Server) handleListDrafts(w http.ResponseWriter, r *http.Request) {
@@ -276,50 +249,6 @@ func (s *Server) handleResolveDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toTransactionDTO(tx))
-}
-
-// --- Правила «контрагент → категория» ---
-
-type ruleDTO struct {
-	ID         string `json:"id"`
-	Pattern    string `json:"pattern"`
-	CategoryID string `json:"categoryId"`
-	Priority   int    `json:"priority"`
-}
-
-func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := s.user(r).SMS.ListRules()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := make([]ruleDTO, 0, len(rules))
-	for _, r := range rules {
-		out = append(out, ruleDTO{ID: r.ID, Pattern: r.Pattern, CategoryID: r.CategoryID, Priority: r.Priority})
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
-	var req ruleDTO
-	if err := readJSON(r, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	rule, err := s.user(r).SMS.CreateRule(req.Pattern, req.CategoryID, req.Priority)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, ruleDTO{ID: rule.ID, Pattern: rule.Pattern, CategoryID: rule.CategoryID, Priority: rule.Priority})
-}
-
-func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.user(r).SMS.DeleteRule(r.PathValue("id")); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Справочник контрагентов ---

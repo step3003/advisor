@@ -59,7 +59,7 @@ func buildServer(t *testing.T) *Server {
 				Reporting: reportingsvc.New(txs, currency),
 				Settings:  settingssvc.New(idx.Settings(uid), idx.Currencies()),
 				IO:        iosvc.New(cats, txs, idx.Plans(uid), idx.Recurring(uid)),
-				SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), idx.Merchants(uid), ledger, sysClock, idGen),
+				SMS:       smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Merchants(uid), ledger, sysClock, idGen),
 			}
 		},
 	}

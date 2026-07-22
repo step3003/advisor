@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
-  Alert,
-  Badge,
   Box,
   Button,
   Card,
   Checkbox,
   Code,
+  Collapse,
   Group,
   Modal,
   NumberInput,
@@ -23,25 +22,21 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconEdit, IconPlus, IconTrash, IconTestPipe } from "@tabler/icons-react";
+import { IconChevronDown, IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
 
 import {
   assignMerchant,
-  createRule,
   createSmsTemplate,
   createTemplateFromSample,
   deleteDraft,
-  deleteRule,
   deleteSmsTemplate,
   listInbox,
   listMerchants,
-  listRules,
   listSmsTemplates,
   resolveDraft,
-  testSms,
   updateSmsTemplate,
 } from "../api/client";
-import type { CategoryRule, EntryType, InboxDraft, Merchant, Money, SignalKind, SmsTemplate, SmsTestResult } from "../api/types";
+import type { EntryType, InboxDraft, Merchant, Money, SignalKind, SmsTemplate } from "../api/types";
 import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { useCategories } from "../state/categories";
@@ -70,32 +65,26 @@ export function SmsPage() {
   const { isAdmin } = useMe();
   const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [drafts, setDrafts] = useState<InboxDraft[]>([]);
-  const [rules, setRules] = useState<CategoryRule[]>([]);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
+  const [advanced, setAdvanced] = useState(false); // раскрыть шаблоны (продвинутое)
 
   const [tplOpened, tpl] = useDisclosure(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<SmsTemplate, "id">>(EMPTY);
 
-  // Тест.
-  const [testSender, setTestSender] = useState("");
-  const [testText, setTestText] = useState("");
-  const [testResult, setTestResult] = useState<SmsTestResult | null>(null);
-
-  // Разбор черновика.
+  // Разбор черновика вручную (формат известен, нужна только категория).
   const [resolveOpened, resolveDlg] = useDisclosure(false);
   const [draft, setDraft] = useState<InboxDraft | null>(null);
 
-  // Сборка шаблона «по образцу».
+  // Сборка шаблона «по образцу» (формат неизвестен).
   const [teachOpened, teach] = useDisclosure(false);
   const [teachDraft, setTeachDraft] = useState<InboxDraft | null>(null);
 
   async function load() {
     try {
-      const [t, d, rs, ms] = await Promise.all([listSmsTemplates(), listInbox(true), listRules(), listMerchants()]);
+      const [t, d, ms] = await Promise.all([listSmsTemplates(), listInbox(true), listMerchants()]);
       setTemplates(t);
       setDrafts(d);
-      setRules(rs);
       setMerchants(ms);
     } catch (e) {
       notifyError(e);
@@ -141,103 +130,28 @@ export function SmsPage() {
     }
   }
 
-  async function runTest() {
-    try {
-      setTestResult(await testSms(testSender, testText));
-    } catch (e) {
-      notifyError(e);
+  // Одна точка входа для черновика: если формат уже распознан (есть сумма) —
+  // просто категоризируем; если формат новый и мы админ — учим «по образцу».
+  function openDraft(d: InboxDraft) {
+    if (!d.amount && isAdmin) {
+      setTeachDraft(d);
+      teach.open();
+    } else {
+      setDraft(d);
+      resolveDlg.open();
     }
-  }
-
-  function openResolve(d: InboxDraft) {
-    setDraft(d);
-    resolveDlg.open();
   }
 
   return (
     <Stack>
       <Title order={3}>SMS-парсер</Title>
       <Text size="sm" c="dimmed">
-        Настройте шаблоны разбора банковских SMS. Android-приложение шлёт сырой текст SMS
-        на сервер, а сервер по шаблонам извлекает сумму и создаёт операцию. Нераспознанные
-        SMS попадают во «Входящие» для ручного разбора.
+        Android-приложение шлёт банковские SMS на сервер. Знакомые — разносятся сами;
+        новые попадают во «Входящие»: нажми «Разобрать» и один раз укажи, где сумма и
+        контрагент/счёт — дальше такие сообщения парсятся автоматически.
       </Text>
 
-      {/* Шаблоны */}
-      <Card withBorder padding="md">
-        <Group justify="space-between" mb="sm">
-          <Title order={5}>Шаблоны разбора {!isAdmin && <Text span size="xs" c="dimmed">(общие, меняет админ)</Text>}</Title>
-          {isAdmin && (
-            <Button size="xs" leftSection={<IconPlus size={14} />} onClick={openNew}>
-              Новый шаблон
-            </Button>
-          )}
-        </Group>
-        <Table striped>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Название</Table.Th>
-              <Table.Th>Отправитель</Table.Th>
-              <Table.Th>Тип</Table.Th>
-              <Table.Th>Категория</Table.Th>
-              <Table.Th>Вкл.</Table.Th>
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {templates.map((t) => (
-              <Table.Tr key={t.id}>
-                <Table.Td>{t.name}</Table.Td>
-                <Table.Td>{t.sender || "любой"}</Table.Td>
-                <Table.Td>{t.type === "income" ? "Доход" : "Расход"}</Table.Td>
-                <Table.Td>{t.defaultCategoryId ? displayName(t.defaultCategoryId) : <Text c="dimmed" size="sm">во входящие</Text>}</Table.Td>
-                <Table.Td>{t.enabled ? <Badge color="green" variant="light">да</Badge> : <Badge color="gray" variant="light">нет</Badge>}</Table.Td>
-                <Table.Td>
-                  {isAdmin && (
-                    <Group gap={2} justify="flex-end" wrap="nowrap">
-                      <ActionIcon variant="subtle" onClick={() => openEdit(t)}><IconEdit size={16} /></ActionIcon>
-                      <ActionIcon variant="subtle" color="red" onClick={() => removeTemplate(t.id)}><IconTrash size={16} /></ActionIcon>
-                    </Group>
-                  )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
-            {templates.length === 0 && (
-              <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Шаблонов пока нет.</Text></Table.Td></Table.Tr>
-            )}
-          </Table.Tbody>
-        </Table>
-      </Card>
-
-      {/* Тест */}
-      <Card withBorder padding="md">
-        <Title order={5} mb="sm">Проверка на примере</Title>
-        <Stack gap="xs">
-          <TextInput label="Отправитель" placeholder="Priorbank" value={testSender} onChange={(e) => setTestSender(e.currentTarget.value)} />
-          <Textarea label="Текст SMS" autosize minRows={2} placeholder="Oplata 45.20 BYN v EUROOPT" value={testText} onChange={(e) => setTestText(e.currentTarget.value)} />
-          <Button variant="light" leftSection={<IconTestPipe size={16} />} onClick={runTest} w="fit-content">Проверить</Button>
-          {testResult && (
-            testResult.matched ? (
-              <Alert color="green" title={`Совпал шаблон: ${testResult.templateName}`}>
-                Сумма: <b>{testResult.amount ? formatMoney(testResult.amount) : "—"}</b>, тип:{" "}
-                {testResult.type === "income" ? "доход" : "расход"}
-                {testResult.merchant ? <>, контрагент: <b>{testResult.merchant}</b></> : null}
-                {testResult.defaultCategoryId ? `, категория: ${displayName(testResult.defaultCategoryId)}` : " (без категории → во входящие)"}
-              </Alert>
-            ) : (
-              <Alert color="orange" title="Ни один шаблон не совпал">Проверьте отправителя и regex.</Alert>
-            )
-          )}
-        </Stack>
-      </Card>
-
-      {/* Справочник контрагентов */}
-      <MerchantsCard merchants={merchants} onChange={load} />
-
-      {/* Правила «контрагент → категория» */}
-      <RulesCard rules={rules} onChange={load} />
-
-      {/* Входящие */}
+      {/* Входящие — главное */}
       <Card withBorder padding="md">
         <Title order={5} mb="sm">Входящие ({drafts.length})</Title>
         <Table striped>
@@ -261,20 +175,71 @@ export function SmsPage() {
                 <Table.Td>{d.amount ? formatMoney(d.amount) : <Text c="dimmed" size="sm">?</Text>}</Table.Td>
                 <Table.Td>
                   <Group gap={4} justify="flex-end" wrap="nowrap">
-                    {isAdmin && (
-                      <Button size="xs" variant="light" color="grape" onClick={() => { setTeachDraft(d); teach.open(); }}>По образцу</Button>
-                    )}
-                    <Button size="xs" variant="light" onClick={() => openResolve(d)}>Разобрать</Button>
+                    <Button size="xs" variant="light" onClick={() => openDraft(d)}>Разобрать</Button>
                     <ActionIcon variant="subtle" color="red" onClick={async () => { await deleteDraft(d.id); void load(); }}><IconTrash size={16} /></ActionIcon>
                   </Group>
                 </Table.Td>
               </Table.Tr>
             ))}
             {drafts.length === 0 && (
-              <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Входящих нет.</Text></Table.Td></Table.Tr>
+              <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Входящих нет — всё разобрано.</Text></Table.Td></Table.Tr>
             )}
           </Table.Tbody>
         </Table>
+      </Card>
+
+      {/* Справочник контрагентов и счетов */}
+      <MerchantsCard merchants={merchants} onChange={load} />
+
+      {/* Шаблоны — продвинутое, свёрнуто */}
+      <Card withBorder padding="md">
+        <Group justify="space-between" style={{ cursor: "pointer" }} onClick={() => setAdvanced((v) => !v)}>
+          <Title order={5}>Шаблоны разбора <Text span size="xs" c="dimmed">(продвинутое)</Text></Title>
+          <IconChevronDown size={18} style={{ transform: advanced ? "rotate(180deg)" : undefined, transition: "transform .15s" }} />
+        </Group>
+        <Collapse in={advanced}>
+          <Text size="sm" c="dimmed" mt="sm">
+            Шаблоны собираются сами при разборе «по образцу». Здесь их можно посмотреть, поправить
+            regex вручную (для банков с «плавающим» текстом) или удалить.
+          </Text>
+          {isAdmin && (
+            <Group justify="flex-end" my="sm">
+              <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={openNew}>Новый шаблон вручную</Button>
+            </Group>
+          )}
+          <Table striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Название</Table.Th>
+                <Table.Th>Отправитель</Table.Th>
+                <Table.Th>Тип</Table.Th>
+                <Table.Th>Категория</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {templates.map((t) => (
+                <Table.Tr key={t.id}>
+                  <Table.Td>{t.name}</Table.Td>
+                  <Table.Td>{t.sender || "любой"}</Table.Td>
+                  <Table.Td>{t.type === "income" ? "Доход" : "Расход"}</Table.Td>
+                  <Table.Td>{t.defaultCategoryId ? displayName(t.defaultCategoryId) : <Text c="dimmed" size="sm">по контрагенту</Text>}</Table.Td>
+                  <Table.Td>
+                    {isAdmin && (
+                      <Group gap={2} justify="flex-end" wrap="nowrap">
+                        <ActionIcon variant="subtle" onClick={() => openEdit(t)}><IconEdit size={16} /></ActionIcon>
+                        <ActionIcon variant="subtle" color="red" onClick={() => removeTemplate(t.id)}><IconTrash size={16} /></ActionIcon>
+                      </Group>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {templates.length === 0 && (
+                <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Шаблонов пока нет.</Text></Table.Td></Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </Collapse>
       </Card>
 
       <TemplateModal opened={tplOpened} onClose={tpl.close} form={form} setForm={setForm} onSave={saveTemplate} />
@@ -654,79 +619,5 @@ function TeachModal({ opened, onClose, draft, onDone }: {
         </Group>
       </Stack>
     </Modal>
-  );
-}
-
-// RulesCard — правила «контрагент → категория»: список + добавление.
-function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () => void }) {
-  const { displayName } = useCategories();
-  const [pattern, setPattern] = useState("");
-  const [catId, setCatId] = useState<string | null>(null);
-
-  async function add() {
-    if (!pattern.trim() || !catId) {
-      notifyError(new Error("Укажите контрагента и категорию"));
-      return;
-    }
-    try {
-      await createRule(pattern.trim(), catId);
-      setPattern("");
-      setCatId(null);
-      onChange();
-      notifyOk("Правило добавлено");
-    } catch (e) {
-      notifyError(e);
-    }
-  }
-
-  async function remove(id: string) {
-    try {
-      await deleteRule(id);
-      onChange();
-    } catch (e) {
-      notifyError(e);
-    }
-  }
-
-  return (
-    <Card withBorder padding="md">
-      <Title order={5} mb="xs">Правила по подстроке <Text span size="xs" c="dimmed">(дополнительно)</Text></Title>
-      <Text size="sm" c="dimmed" mb="sm">
-        Необязательный слой для массовых паттернов: если имя контрагента содержит подстроку —
-        операция относится к категории. Точная привязка контрагента (выше) приоритетнее.
-      </Text>
-      <Table striped mb="sm">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Контрагент содержит</Table.Th>
-            <Table.Th>Категория</Table.Th>
-            <Table.Th />
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {rules.map((r) => (
-            <Table.Tr key={r.id}>
-              <Table.Td>{r.pattern}</Table.Td>
-              <Table.Td>{displayName(r.categoryId)}</Table.Td>
-              <Table.Td>
-                <ActionIcon variant="subtle" color="red" onClick={() => remove(r.id)} style={{ float: "right" }}>
-                  <IconTrash size={16} />
-                </ActionIcon>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-          {rules.length === 0 && (
-            <Table.Tr><Table.Td colSpan={3}><Text c="dimmed" ta="center" py="sm">Правил пока нет.</Text></Table.Td></Table.Tr>
-          )}
-        </Table.Tbody>
-      </Table>
-      <Group align="flex-end" gap="xs" wrap="wrap">
-        <TextInput label="Контрагент (подстрока)" placeholder="YANDEX" value={pattern} onChange={(e) => setPattern(e.currentTarget.value)} />
-        <div style={{ minWidth: 200 }}>
-          <CategorySelect type="expense" value={catId} onChange={setCatId} label="Категория" />
-        </div>
-        <Button leftSection={<IconPlus size={16} />} onClick={add}>Добавить</Button>
-      </Group>
-    </Card>
   );
 }

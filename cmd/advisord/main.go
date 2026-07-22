@@ -103,9 +103,9 @@ func run(cfg config) error {
 				Reporting: reportingsvc.New(txs, currency),
 				Settings:  settingssvc.New(idx.Settings(uid), idx.Currencies()),
 				IO:        iosvc.New(cats, txs, idx.Plans(uid), idx.Recurring(uid)),
-				// Шаблоны — глобальные (админ-пресеты для всех); правила, черновики и
-				// справочник продавцов — персональные.
-				SMS: smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Rules(uid), idx.Merchants(uid), userLedger, sysClock, idGen),
+				// Шаблоны — глобальные (админ-пресеты для всех); черновики и справочник
+				// контрагентов/счетов — персональные.
+				SMS: smssvc.New(idx.SMSTemplates(), idx.Drafts(uid), idx.Merchants(uid), userLedger, sysClock, idGen),
 			}
 		},
 	}

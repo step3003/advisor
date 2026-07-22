@@ -81,22 +81,6 @@ type DraftRepo interface {
 	Delete(id string) error
 }
 
-// CategoryRule — правило авто-категоризации «контрагент → категория».
-type CategoryRule struct {
-	ID         string
-	Pattern    string // подстрока названия контрагента (без учёта регистра)
-	CategoryID string
-	Priority   int
-	CreatedAt  time.Time
-}
-
-// RuleRepo — хранилище правил.
-type RuleRepo interface {
-	Create(r *CategoryRule) error
-	List() ([]*CategoryRule, error) // по убыванию priority
-	Delete(id string) error
-}
-
 // Тип признака распознавания.
 const (
 	KindMerchant = "merchant" // контрагент (мерчант из покупки) — имя читаемо
@@ -142,7 +126,6 @@ const UnknownMerchant = "Контрагент (Неизвестно)"
 type Service struct {
 	templates TemplateRepo
 	drafts    DraftRepo
-	rules     RuleRepo
 	merchants MerchantRepo
 	ledger    *ledgersvc.Service
 	clock     ports.Clock
@@ -150,8 +133,8 @@ type Service struct {
 }
 
 // New создаёт сервис.
-func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, merchants MerchantRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
-	return &Service{templates: templates, drafts: drafts, rules: rules, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
+func New(templates TemplateRepo, drafts DraftRepo, merchants MerchantRepo, ledger *ledgersvc.Service, clock ports.Clock, ids ports.IDGenerator) *Service {
+	return &Service{templates: templates, drafts: drafts, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
 }
 
 // ListMerchants возвращает строгий список распознавания (контрагенты и счета);
@@ -168,45 +151,6 @@ func (s *Service) AssignMerchant(name, categoryID, label string) error {
 		return fmt.Errorf("sms: пустой признак")
 	}
 	return s.merchants.Assign(name, categoryID, strings.TrimSpace(label))
-}
-
-// --- Правила «контрагент → категория» ---
-
-func (s *Service) ListRules() ([]*CategoryRule, error) { return s.rules.List() }
-
-func (s *Service) CreateRule(pattern, categoryID string, priority int) (*CategoryRule, error) {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || categoryID == "" {
-		return nil, fmt.Errorf("sms: нужны контрагент (подстрока) и категория")
-	}
-	r := &CategoryRule{
-		ID: s.ids.NewID(), Pattern: pattern, CategoryID: categoryID,
-		Priority: priority, CreatedAt: s.clock.Now().UTC(),
-	}
-	if err := s.rules.Create(r); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-func (s *Service) DeleteRule(id string) error { return s.rules.Delete(id) }
-
-// matchRule возвращает категорию по первому правилу, чья подстрока есть в контрагенте.
-func (s *Service) matchRule(merchant string) string {
-	if merchant == "" {
-		return ""
-	}
-	rules, err := s.rules.List()
-	if err != nil {
-		return ""
-	}
-	ml := strings.ToLower(merchant)
-	for _, r := range rules {
-		if r.Pattern != "" && strings.Contains(ml, strings.ToLower(r.Pattern)) {
-			return r.CategoryID
-		}
-	}
-	return ""
 }
 
 // --- Шаблоны (CRUD) ---
@@ -304,15 +248,6 @@ func validateTemplate(t *Template) error {
 
 // --- Разбор ---
 
-// Test применяет включённые шаблоны к SMS, не сохраняя ничего (для кабинета).
-func (s *Service) Test(sender, text string) (ParseResult, error) {
-	tmpls, err := s.templates.ListEnabled()
-	if err != nil {
-		return ParseResult{}, err
-	}
-	return parseWith(tmpls, sender, text)
-}
-
 // IngestOutcome — что произошло при приёме SMS.
 type IngestOutcome struct {
 	Matched       bool
@@ -340,17 +275,10 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		entry, _ = s.merchants.Entry(res.Merchant)
 	}
 
-	// Категория, по приоритету:
-	//   1) закреплённая за признаком (точное совпадение);
-	//   2) правило-подстрока (доп. слой для массовых паттернов);
-	//   3) дефолт шаблона.
+	// Категория: закреплённая за признаком (точное совпадение) → иначе дефолт шаблона.
 	category := res.DefaultCategoryID
 	if entry != nil && entry.CategoryID != "" {
 		category = entry.CategoryID
-	} else if res.Matched && res.Merchant != "" {
-		if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
-			category = ruleCat
-		}
 	}
 
 	// Есть категория — создаём операцию сразу. Примечание: ярлык записи, иначе сам

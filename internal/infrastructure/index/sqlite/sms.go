@@ -88,49 +88,6 @@ func scanTemplate(sc scanner) (*smssvc.Template, error) {
 	return &t, nil
 }
 
-// --- Правила «контрагент → категория» ---
-
-// RuleRepo реализует sms.RuleRepo для одного владельца (правила персональные).
-type RuleRepo struct {
-	idx   *Index
-	owner string
-}
-
-// Rules возвращает репозиторий правил авто-категоризации владельца ownerID.
-func (i *Index) Rules(ownerID string) *RuleRepo { return &RuleRepo{idx: i, owner: ownerID} }
-
-func (r *RuleRepo) Create(rule *smssvc.CategoryRule) error {
-	_, err := r.idx.db.Exec(`INSERT INTO category_rules(id,owner_id,pattern,category_id,priority,created_at)
-		VALUES(?,?,?,?,?,?)`,
-		rule.ID, r.owner, rule.Pattern, rule.CategoryID, rule.Priority, rule.CreatedAt.UTC().Format(rfc3339))
-	return err
-}
-
-func (r *RuleRepo) List() ([]*smssvc.CategoryRule, error) {
-	rows, err := r.idx.db.Query(`SELECT id,pattern,category_id,priority,created_at
-		FROM category_rules WHERE owner_id=? ORDER BY priority DESC, created_at ASC`, r.owner)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*smssvc.CategoryRule
-	for rows.Next() {
-		var rule smssvc.CategoryRule
-		var created string
-		if err := rows.Scan(&rule.ID, &rule.Pattern, &rule.CategoryID, &rule.Priority, &created); err != nil {
-			return nil, err
-		}
-		rule.CreatedAt, _ = parseTime(created)
-		out = append(out, &rule)
-	}
-	return out, rows.Err()
-}
-
-func (r *RuleRepo) Delete(id string) error {
-	_, err := r.idx.db.Exec(`DELETE FROM category_rules WHERE id=? AND owner_id=?`, id, r.owner)
-	return err
-}
-
 // --- Входящие черновики ---
 
 // DraftRepo реализует sms.DraftRepo для одного владельца.

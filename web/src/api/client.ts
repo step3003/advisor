@@ -1,7 +1,6 @@
 import type {
   AdminUser,
   Category,
-  CategoryRule,
   Merchant,
   CurrencyInfo,
   EntryType,
@@ -15,7 +14,6 @@ import type {
   Recurring,
   Settings,
   SmsTemplate,
-  SmsTestResult,
   Transaction,
 } from "./types";
 
@@ -156,9 +154,6 @@ export const updateSmsTemplate = (id: string, t: SmsTemplateInput) =>
   req<SmsTemplate>("PATCH", `/api/sms/templates/${id}`, t);
 export const deleteSmsTemplate = (id: string) =>
   req<void>("DELETE", `/api/sms/templates/${id}`);
-export const testSms = (sender: string, text: string) =>
-  req<SmsTestResult>("POST", "/api/sms/test", { sender, text });
-
 // --- Входящие (черновики) ---
 export const listInbox = (unresolvedOnly = true) =>
   req<InboxDraft[]>("GET", `/api/inbox?unresolvedOnly=${unresolvedOnly}`);
@@ -171,12 +166,6 @@ export const resolveDraft = (
 ) => req<Transaction>("POST", `/api/inbox/${id}/resolve`, { categoryId, amount, type, rememberMerchant });
 export const deleteDraft = (id: string) =>
   req<void>("DELETE", `/api/inbox/${id}`);
-
-// --- Правила «контрагент → категория» ---
-export const listRules = () => req<CategoryRule[]>("GET", "/api/sms/rules");
-export const createRule = (pattern: string, categoryId: string, priority = 0) =>
-  req<CategoryRule>("POST", "/api/sms/rules", { pattern, categoryId, priority });
-export const deleteRule = (id: string) => req<void>("DELETE", `/api/sms/rules/${id}`);
 
 // --- Сборка шаблона «по образцу» ---
 export interface FromSampleReq {
