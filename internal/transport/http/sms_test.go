@@ -199,6 +199,90 @@ func TestSMSMerchantDirectory(t *testing.T) {
 	}
 }
 
+func TestSMSMerchantExactAssign(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Такси", Type: "expense"}, true)
+	var taxi categoryDTO
+	mustJSON(t, body, &taxi)
+
+	// Шаблон с захватом контрагента, без категории.
+	tmpl := smsTemplateDTO{
+		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	// Закрепляем категорию ТОЧНО за «YANDEX.GO».
+	rec, body = do(t, s, http.MethodPost, "/api/sms/merchants/assign",
+		map[string]string{"name": "YANDEX.GO", "categoryId": taxi.ID}, true)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("assign: %d — %s", rec.Code, body)
+	}
+
+	// SMS от YANDEX.GO — авто-разнос в Такси по точной привязке.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": "Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN", "receivedAt": "2026-07-20",
+	}, true)
+	// SMS от YANDEX.EDA — другой контрагент, категории нет → во «входящие», НЕ операция.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": "Oplata 9.90 BYN. BLR YANDEX.EDA. Balance: 9.36 BYN", "receivedAt": "2026-07-20",
+	}, true)
+
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 || txs[0].CategoryID != taxi.ID || txs[0].Note != "YANDEX.GO" {
+		t.Fatalf("ожидалась ровно 1 операция YANDEX.GO в Такси, got %+v", txs)
+	}
+
+	// В справочнике: у YANDEX.GO — категория, у YANDEX.EDA — пусто.
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	var ms []merchantDTO
+	mustJSON(t, body, &ms)
+	byName := map[string]merchantDTO{}
+	for _, m := range ms {
+		byName[m.Name] = m
+	}
+	if byName["YANDEX.GO"].CategoryID != taxi.ID {
+		t.Fatalf("YANDEX.GO должен иметь категорию Такси, got %q", byName["YANDEX.GO"].CategoryID)
+	}
+	if byName["YANDEX.EDA"].CategoryID != "" {
+		t.Fatalf("YANDEX.EDA не должен иметь категорию, got %q", byName["YANDEX.EDA"].CategoryID)
+	}
+}
+
+func TestSMSUnknownMerchantNote(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Прочее", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+
+	// Шаблон с категорией, но БЕЗ захвата контрагента (merchantGroup=0).
+	tmpl := smsTemplateDTO{
+		Name: "Без контрагента", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) BYN`,
+		AmountGroup: 1, FixedCurrency: "BYN", Type: "expense", DefaultCategoryID: cat.ID, Enabled: true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Bank", "text": "Oplata 30.00 BYN", "receivedAt": "2026-07-20",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 || txs[0].Note != "Контрагент (Неизвестно)" {
+		t.Fatalf("ожидалась операция с примечанием «Контрагент (Неизвестно)», got %+v", txs)
+	}
+}
+
 func TestSMSMerchantCapture(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",

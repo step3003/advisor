@@ -290,6 +290,21 @@ var migrations = []migration{
 				GROUP BY owner_id, merchant`,
 		},
 	},
+	{
+		// v8: категория закрепляется прямо за контрагентом (строгий список, точное
+		// совпадение по имени). Бэкофилл из существующих правил, чьё имя-подстрока
+		// совпадает с контрагентом один в один.
+		version: 8,
+		stmts: []string{
+			`ALTER TABLE merchants ADD COLUMN category_id TEXT NOT NULL DEFAULT ''`,
+			`UPDATE merchants SET category_id = COALESCE((
+					SELECT r.category_id FROM category_rules r
+					WHERE r.owner_id = merchants.owner_id AND r.pattern = merchants.name
+					ORDER BY r.priority DESC, r.created_at ASC LIMIT 1
+				), '')
+				WHERE category_id = ''`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

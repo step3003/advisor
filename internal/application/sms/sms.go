@@ -102,15 +102,21 @@ type MerchantEntry struct {
 	SeenCount  int
 	Total      money.Money
 	LastSeen   string // YYYY-MM-DD
-	CategoryID string // подставляется сервисом из правил (matchRule)
+	CategoryID string // категория, закреплённая за контрагентом (точная привязка)
 }
 
-// MerchantRepo — авто-накапливаемый справочник контрагентов (по владельцу).
+// MerchantRepo — строгий список контрагентов (по владельцу): точное совпадение
+// по имени, категория закреплена прямо за контрагентом.
 type MerchantRepo interface {
 	// Observe регистрирует встречу контрагента: +1 к счётчику, +сумма к обороту.
 	Observe(name string, amount money.Money, on core.Date) error
-	List() ([]*MerchantEntry, error) // по убыванию частоты
+	List() ([]*MerchantEntry, error)                       // по убыванию частоты
+	SetCategory(name, categoryID string) error             // закрепить категорию (точно)
+	CategoryOf(name string) (categoryID string, err error) // категория контрагента или ""
 }
+
+// UnknownMerchant — метка операции, когда контрагент из SMS не распознан.
+const UnknownMerchant = "Контрагент (Неизвестно)"
 
 // Service — сервис разбора SMS.
 type Service struct {
@@ -128,17 +134,20 @@ func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, merchants Mer
 	return &Service{templates: templates, drafts: drafts, rules: rules, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
 }
 
-// ListMerchants возвращает справочник контрагентов с подставленной категорией
-// (по текущим правилам «контрагент → категория»).
+// ListMerchants возвращает строгий список контрагентов; категория берётся прямо
+// из закреплённой за контрагентом (точная привязка, не подстрока).
 func (s *Service) ListMerchants() ([]*MerchantEntry, error) {
-	list, err := s.merchants.List()
-	if err != nil {
-		return nil, err
+	return s.merchants.List()
+}
+
+// AssignMerchantCategory закрепляет категорию за контрагентом (точно). Пустой
+// categoryID сбрасывает привязку.
+func (s *Service) AssignMerchantCategory(name, categoryID string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("sms: пустое имя контрагента")
 	}
-	for _, m := range list {
-		m.CategoryID = s.matchRule(m.Name)
-	}
-	return list, nil
+	return s.merchants.SetCategory(name, categoryID)
 }
 
 // --- Правила «контрагент → категория» ---
@@ -266,16 +275,21 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		return IngestOutcome{}, err
 	}
 
-	// Контрагент распознан — учитываем его в справочнике (частота/оборот), даже
+	// Контрагент распознан — учитываем его в строгом списке (частота/оборот), даже
 	// если операция уйдёт во «входящие».
 	if res.Matched && res.Merchant != "" {
 		_ = s.merchants.Observe(res.Merchant, res.Amount, receivedAt)
 	}
 
-	// Категория: правило по продавцу (приоритетнее) → дефолт шаблона.
+	// Категория, по приоритету:
+	//   1) закреплённая за контрагентом (точное совпадение имени);
+	//   2) правило-подстрока (доп. слой для массовых паттернов);
+	//   3) дефолт шаблона.
 	category := res.DefaultCategoryID
-	if res.Matched {
-		if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
+	if res.Matched && res.Merchant != "" {
+		if mc, _ := s.merchants.CategoryOf(res.Merchant); mc != "" {
+			category = mc
+		} else if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
 			category = ruleCat
 		}
 	}
@@ -311,13 +325,13 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	return IngestOutcome{Matched: res.Matched, DraftID: d.ID}, nil
 }
 
-// smsNote формирует примечание операции из SMS: контрагент, если захвачен, иначе
-// укороченный текст сообщения.
-func smsNote(merchant, rawText string) string {
+// smsNote формирует примечание операции из SMS: имя контрагента, если захвачен,
+// иначе метка «Контрагент (Неизвестно)».
+func smsNote(merchant, _ string) string {
 	if merchant != "" {
 		return merchant
 	}
-	return "SMS: " + truncate(rawText, 120)
+	return UnknownMerchant
 }
 
 // parseWith применяет шаблоны по порядку и возвращает первый успешный разбор.
@@ -388,14 +402,6 @@ func normalizeAmount(s string) string {
 	return s
 }
 
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}
-
 // --- Входящие (drafts) ---
 
 func (s *Service) ListDrafts(unresolvedOnly bool) ([]*Draft, error) {
@@ -405,8 +411,8 @@ func (s *Service) ListDrafts(unresolvedOnly bool) ([]*Draft, error) {
 func (s *Service) DeleteDraft(id string) error { return s.drafts.Delete(id) }
 
 // ResolveDraft превращает черновик в операцию. Если rememberMerchant=true и у
-// черновика есть контрагент — создаётся правило «контрагент → категория», и будущие
-// SMS от этого контрагента будут разноситься автоматически.
+// черновика есть контрагент — категория закрепляется прямо за контрагентом
+// (точно), и будущие SMS от него будут разноситься автоматически.
 func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Money, typeOverride core.EntryType, rememberMerchant bool) (*transaction.Transaction, error) {
 	d, err := s.drafts.Get(id)
 	if err != nil {
@@ -434,9 +440,9 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	if err := s.drafts.Save(d); err != nil {
 		return nil, err
 	}
-	// Запомнить контрагента → категорию для будущих SMS.
+	// Запомнить: закрепить категорию за контрагентом (точно) для будущих SMS.
 	if rememberMerchant && d.Merchant != "" {
-		_, _ = s.CreateRule(d.Merchant, categoryID, 0)
+		_ = s.merchants.SetCategory(d.Merchant, categoryID)
 	}
 	return tx, nil
 }

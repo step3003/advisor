@@ -309,6 +309,24 @@ func (s *Server) handleListMerchants(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+type assignMerchantReq struct {
+	Name       string `json:"name"`
+	CategoryID string `json:"categoryId"` // "" => сбросить привязку
+}
+
+func (s *Server) handleAssignMerchant(w http.ResponseWriter, r *http.Request) {
+	var req assignMerchantReq
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.user(r).SMS.AssignMerchantCategory(req.Name, req.CategoryID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {
 	if err := s.user(r).SMS.DeleteDraft(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

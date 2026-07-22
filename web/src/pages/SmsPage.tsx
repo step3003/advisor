@@ -23,6 +23,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { IconEdit, IconPlus, IconTrash, IconTestPipe } from "@tabler/icons-react";
 
 import {
+  assignMerchantCategory,
   createRule,
   createSmsTemplate,
   deleteDraft,
@@ -373,14 +374,14 @@ function ResolveModal({
   );
 }
 
-// MerchantsCard — авто-накапливаемый справочник контрагентов из SMS. Назначение
-// категории прямо из строки создаёт правило «контрагент → категория».
+// MerchantsCard — строгий список контрагентов из SMS. Категория закрепляется
+// прямо за контрагентом (точное совпадение имени), без правил-подстрок.
 function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChange: () => void }) {
   async function assign(name: string, categoryId: string) {
     try {
-      await createRule(name, categoryId);
+      await assignMerchantCategory(name, categoryId);
       onChange();
-      notifyOk(`«${name}» → категория назначена`);
+      notifyOk(`«${name}» → категория закреплена`);
     } catch (e) {
       notifyError(e);
     }
@@ -390,9 +391,9 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
     <Card withBorder padding="md">
       <Title order={5} mb="xs">Справочник контрагентов</Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Контрагенты копятся автоматически из SMS. Назначьте категорию — создастся правило,
-        и будущие платежи этого контрагента будут разноситься сами. Оборот считается по
-        основной валюте контрагента.
+        Контрагенты копятся автоматически из SMS (каждый — отдельно, точно по имени).
+        Закрепите категорию — и будущие платежи этого контрагента будут разноситься сами.
+        Если в SMS контрагент не распознан, операция помечается «Контрагент (Неизвестно)».
       </Text>
       <Table striped>
         <Table.Thead>
@@ -470,10 +471,10 @@ function RulesCard({ rules, onChange }: { rules: CategoryRule[]; onChange: () =>
 
   return (
     <Card withBorder padding="md">
-      <Title order={5} mb="xs">Правила «контрагент → категория»</Title>
+      <Title order={5} mb="xs">Правила по подстроке <Text span size="xs" c="dimmed">(дополнительно)</Text></Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Если название контрагента из SMS содержит эту подстроку — операция автоматически
-        относится к указанной категории (без «Входящих»).
+        Необязательный слой для массовых паттернов: если имя контрагента содержит подстроку —
+        операция относится к категории. Точная привязка контрагента (выше) приоритетнее.
       </Text>
       <Table striped mb="sm">
         <Table.Thead>

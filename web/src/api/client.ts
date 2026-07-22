@@ -180,6 +180,9 @@ export const deleteRule = (id: string) => req<void>("DELETE", `/api/sms/rules/${
 
 // --- Справочник контрагентов ---
 export const listMerchants = () => req<Merchant[]>("GET", "/api/sms/merchants");
+// Закрепить категорию за контрагентом (точно). categoryId="" — сбросить.
+export const assignMerchantCategory = (name: string, categoryId: string) =>
+  req<void>("POST", "/api/sms/merchants/assign", { name, categoryId });
 
 // --- Аккаунты ---
 export const authStatus = () =>
