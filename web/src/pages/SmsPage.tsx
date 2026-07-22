@@ -11,6 +11,7 @@ import {
   Modal,
   NumberInput,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Table,
@@ -23,7 +24,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { IconEdit, IconPlus, IconTrash, IconTestPipe } from "@tabler/icons-react";
 
 import {
-  assignMerchantCategory,
+  assignMerchant,
   createRule,
   createSmsTemplate,
   deleteDraft,
@@ -37,7 +38,7 @@ import {
   testSms,
   updateSmsTemplate,
 } from "../api/client";
-import type { CategoryRule, EntryType, InboxDraft, Merchant, Money, SmsTemplate, SmsTestResult } from "../api/types";
+import type { CategoryRule, EntryType, InboxDraft, Merchant, Money, SignalKind, SmsTemplate, SmsTestResult } from "../api/types";
 import { CategorySelect } from "../components/CategorySelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { useCategories } from "../state/categories";
@@ -53,6 +54,7 @@ const EMPTY: Omit<SmsTemplate, "id"> = {
   amountGroup: 1,
   currencyGroup: 0,
   merchantGroup: 0,
+  captureKind: "merchant",
   fixedCurrency: "BYN",
   type: "expense",
   defaultCategoryId: "",
@@ -296,8 +298,19 @@ function TemplateModal({
         <Group grow>
           <NumberInput label="Группа суммы" min={1} value={form.amountGroup} onChange={(v) => set("amountGroup", Number(v) || 1)} />
           <NumberInput label="Группа валюты (0 = фикс.)" min={0} value={form.currencyGroup} onChange={(v) => set("currencyGroup", Number(v) || 0)} />
-          <NumberInput label="Группа контрагента (0 = нет)" min={0} value={form.merchantGroup} onChange={(v) => set("merchantGroup", Number(v) || 0)} />
+          <NumberInput label="Группа признака (0 = нет)" min={0} value={form.merchantGroup} onChange={(v) => set("merchantGroup", Number(v) || 0)} />
         </Group>
+        {form.merchantGroup > 0 && (
+          <Select
+            label="Тип признака"
+            description="Что ловит эта группа: контрагента (покупка) или счёт (ЕРИП/перевод)"
+            data={[{ label: "Контрагент", value: "merchant" }, { label: "Счёт", value: "account" }]}
+            value={form.captureKind}
+            onChange={(v) => v && set("captureKind", v as SignalKind)}
+            allowDeselect={false}
+            w={220}
+          />
+        )}
         {form.currencyGroup === 0 && (
           <TextInput label="Фиксированная валюта" value={form.fixedCurrency} onChange={(e) => set("fixedCurrency", e.currentTarget.value.toUpperCase())}
             list="cur-list" />
@@ -374,28 +387,36 @@ function ResolveModal({
   );
 }
 
-// MerchantsCard — строгий список контрагентов из SMS. Категория закрепляется
-// прямо за контрагентом (точное совпадение имени), без правил-подстрок.
+type AssignFn = (name: string, categoryId: string, label: string) => void;
+
+// MerchantsCard — строгий список распознавания из SMS, разделён на «Контрагентов»
+// (покупки) и «Счета» (ЕРИП/переводы). Категория (и для счетов — название)
+// закрепляются прямо за признаком по точному совпадению имени.
 function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChange: () => void }) {
-  async function assign(name: string, categoryId: string) {
+  const assign: AssignFn = async (name, categoryId, label) => {
     try {
-      await assignMerchantCategory(name, categoryId);
+      await assignMerchant(name, categoryId, label);
       onChange();
-      notifyOk(`«${name}» → категория закреплена`);
+      notifyOk(`«${label || name}» сохранён`);
     } catch (e) {
       notifyError(e);
     }
-  }
+  };
+
+  const contractors = merchants.filter((m) => m.kind !== "account");
+  const accounts = merchants.filter((m) => m.kind === "account");
 
   return (
     <Card withBorder padding="md">
-      <Title order={5} mb="xs">Справочник контрагентов</Title>
+      <Title order={5} mb="xs">Контрагенты и счета</Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Контрагенты копятся автоматически из SMS (каждый — отдельно, точно по имени).
-        Закрепите категорию — и будущие платежи этого контрагента будут разноситься сами.
-        Если в SMS контрагент не распознан, операция помечается «Контрагент (Неизвестно)».
+        Признаки из SMS копятся автоматически (каждый отдельно, точно по имени).
+        Закрепите категорию — и будущие платежи разнесутся сами. Счёт — это номер
+        договора (ЕРИП/перевод), ему можно задать понятное название.
       </Text>
-      <Table striped>
+
+      <Text fw={600} size="sm" mb={4}>Контрагенты <Text span c="dimmed" size="xs">(покупки)</Text></Text>
+      <Table striped mb="lg">
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Контрагент</Table.Th>
@@ -405,11 +426,28 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {merchants.map((m) => (
-            <MerchantRow key={m.name} m={m} onAssign={assign} />
-          ))}
-          {merchants.length === 0 && (
-            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет — появятся после разбора SMS.</Text></Table.Td></Table.Tr>
+          {contractors.map((m) => <MerchantRow key={m.name} m={m} onAssign={assign} />)}
+          {contractors.length === 0 && (
+            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет.</Text></Table.Td></Table.Tr>
+          )}
+        </Table.Tbody>
+      </Table>
+
+      <Text fw={600} size="sm" mb={4}>Счета <Text span c="dimmed" size="xs">(ЕРИП / переводы)</Text></Text>
+      <Table striped>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Счёт</Table.Th>
+            <Table.Th>Название</Table.Th>
+            <Table.Th ta="right">Встреч</Table.Th>
+            <Table.Th ta="right">Оборот</Table.Th>
+            <Table.Th>Категория</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {accounts.map((m) => <AccountRow key={m.name} m={m} onAssign={assign} />)}
+          {accounts.length === 0 && (
+            <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Счетов пока нет.</Text></Table.Td></Table.Tr>
           )}
         </Table.Tbody>
       </Table>
@@ -417,7 +455,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
   );
 }
 
-function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: (name: string, categoryId: string) => void }) {
+function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
   return (
     <Table.Tr>
       <Table.Td>{m.name}</Table.Td>
@@ -428,7 +466,39 @@ function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: (name: string, ca
           <CategorySelect
             type="expense"
             value={m.categoryId ?? null}
-            onChange={(id) => id && onAssign(m.name, id)}
+            onChange={(id) => id && onAssign(m.name, id, m.label ?? "")}
+            hideLabel
+            placeholder="Назначить…"
+          />
+        </div>
+      </Table.Td>
+    </Table.Tr>
+  );
+}
+
+// AccountRow — строка счёта: номер + редактируемое название + категория.
+function AccountRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
+  const [label, setLabel] = useState(m.label ?? "");
+  return (
+    <Table.Tr>
+      <Table.Td><Text size="sm" style={{ fontFamily: "monospace" }}>{m.name}</Text></Table.Td>
+      <Table.Td>
+        <TextInput
+          size="xs"
+          placeholder="напр. Электроэнергия"
+          value={label}
+          onChange={(e) => setLabel(e.currentTarget.value)}
+          onBlur={() => { if (label !== (m.label ?? "")) onAssign(m.name, m.categoryId ?? "", label); }}
+        />
+      </Table.Td>
+      <Table.Td ta="right">{m.seenCount}</Table.Td>
+      <Table.Td ta="right">{formatMoney(m.total)}</Table.Td>
+      <Table.Td>
+        <div style={{ minWidth: 170 }}>
+          <CategorySelect
+            type="expense"
+            value={m.categoryId ?? null}
+            onChange={(id) => id && onAssign(m.name, id, label)}
             hideLabel
             placeholder="Назначить…"
           />

@@ -109,12 +109,15 @@ export interface SmsTemplate {
   amountGroup: number;
   currencyGroup: number;
   merchantGroup: number;
+  captureKind: SignalKind; // что ловит merchantGroup: контрагент | счёт
   fixedCurrency: string;
   type: EntryType;
   defaultCategoryId: string;
   enabled: boolean;
   priority: number;
 }
+
+export type SignalKind = "merchant" | "account";
 
 export interface SmsTestResult {
   matched: boolean;
@@ -146,6 +149,8 @@ export interface CategoryRule {
 
 export interface Merchant {
   name: string;
+  kind: SignalKind;
+  label?: string;
   seenCount: number;
   total: Money;
   lastSeen: string;

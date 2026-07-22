@@ -255,6 +255,77 @@ func TestSMSMerchantExactAssign(t *testing.T) {
 	}
 }
 
+func TestSMSAccountKindAndLabel(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Прочее", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+
+	// Шаблон ЕРИП: ловит счёт (captureKind=account), сумму и валюту, категория Прочее.
+	tmpl := smsTemplateDTO{
+		Name:              "ЕРИП",
+		Pattern:           `schet platezha ([0-9*]+)\. Summa ([0-9]+[.,][0-9]{2}) ([A-Z]{3})`,
+		AmountGroup:       2,
+		CurrencyGroup:     3,
+		MerchantGroup:     1,
+		CaptureKind:       "account",
+		FixedCurrency:     "BYN",
+		Type:              "expense",
+		DefaultCategoryID: cat.ID,
+		Enabled:           true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create template: %d — %s", rec.Code, body)
+	}
+
+	erip := "<#> 22/07 10:46. Platezh s DK6310, schet platezha 2162427167000030*140. Summa 40.46 BYN. M-code:150212"
+
+	// Первый приём: операция в Прочее, признак — счёт, ярлыка ещё нет → примечание = номер.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{"sender": "Bank", "text": erip, "receivedAt": "2026-07-22"}, true)
+
+	// Запись в списке — тип «account».
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	var ms []merchantDTO
+	mustJSON(t, body, &ms)
+	if len(ms) != 1 || ms[0].Kind != "account" || ms[0].Name != "2162427167000030*140" {
+		t.Fatalf("ожидалась 1 запись типа account, got %+v", ms)
+	}
+
+	// Задаём название счёту.
+	rec, body = do(t, s, http.MethodPost, "/api/sms/merchants/assign",
+		map[string]string{"name": "2162427167000030*140", "categoryId": cat.ID, "label": "Электроэнергия"}, true)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("assign: %d — %s", rec.Code, body)
+	}
+
+	// Второй приём — примечание теперь = название.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{"sender": "Bank", "text": erip, "receivedAt": "2026-07-22"}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 2 {
+		t.Fatalf("ожидалось 2 операции, got %d", len(txs))
+	}
+	// Одна операция (до ярлыка) — с номером, вторая (после) — с названием.
+	var withLabel, withNumber bool
+	for _, tx := range txs {
+		if tx.CategoryID != cat.ID {
+			t.Fatalf("операция должна быть в Прочее, got cat=%q", tx.CategoryID)
+		}
+		switch tx.Note {
+		case "Электроэнергия":
+			withLabel = true
+		case "2162427167000030*140":
+			withNumber = true
+		}
+	}
+	if !withLabel || !withNumber {
+		t.Fatalf("ожидались операции с номером и с названием «Электроэнергия», got %+v", txs)
+	}
+}
+
 func TestSMSUnknownMerchantNote(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",

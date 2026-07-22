@@ -18,6 +18,7 @@ type smsTemplateDTO struct {
 	AmountGroup       int    `json:"amountGroup"`
 	CurrencyGroup     int    `json:"currencyGroup"`
 	MerchantGroup     int    `json:"merchantGroup"`
+	CaptureKind       string `json:"captureKind"` // "merchant" | "account"
 	FixedCurrency     string `json:"fixedCurrency"`
 	Type              string `json:"type"`
 	DefaultCategoryID string `json:"defaultCategoryId"`
@@ -29,8 +30,8 @@ func toSMSTemplateDTO(t *smssvc.Template) smsTemplateDTO {
 	return smsTemplateDTO{
 		ID: t.ID, Name: t.Name, Sender: t.Sender, Pattern: t.Pattern,
 		AmountGroup: t.AmountGroup, CurrencyGroup: t.CurrencyGroup, MerchantGroup: t.MerchantGroup,
-		FixedCurrency: t.FixedCurrency, Type: string(t.Type), DefaultCategoryID: t.DefaultCategoryID,
-		Enabled: t.Enabled, Priority: t.Priority,
+		CaptureKind: t.CaptureKind, FixedCurrency: t.FixedCurrency, Type: string(t.Type),
+		DefaultCategoryID: t.DefaultCategoryID, Enabled: t.Enabled, Priority: t.Priority,
 	}
 }
 
@@ -38,8 +39,8 @@ func (d smsTemplateDTO) toTemplate() *smssvc.Template {
 	return &smssvc.Template{
 		Name: d.Name, Sender: d.Sender, Pattern: d.Pattern,
 		AmountGroup: d.AmountGroup, CurrencyGroup: d.CurrencyGroup, MerchantGroup: d.MerchantGroup,
-		FixedCurrency: d.FixedCurrency, Type: core.EntryType(d.Type), DefaultCategoryID: d.DefaultCategoryID,
-		Enabled: d.Enabled, Priority: d.Priority,
+		CaptureKind: d.CaptureKind, FixedCurrency: d.FixedCurrency, Type: core.EntryType(d.Type),
+		DefaultCategoryID: d.DefaultCategoryID, Enabled: d.Enabled, Priority: d.Priority,
 	}
 }
 
@@ -287,6 +288,8 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 
 type merchantDTO struct {
 	Name       string   `json:"name"`
+	Kind       string   `json:"kind"` // "merchant" | "account"
+	Label      string   `json:"label,omitempty"`
 	SeenCount  int      `json:"seenCount"`
 	Total      moneyDTO `json:"total"`
 	LastSeen   string   `json:"lastSeen"`
@@ -302,8 +305,8 @@ func (s *Server) handleListMerchants(w http.ResponseWriter, r *http.Request) {
 	out := make([]merchantDTO, 0, len(list))
 	for _, m := range list {
 		out = append(out, merchantDTO{
-			Name: m.Name, SeenCount: m.SeenCount, Total: toMoney(m.Total),
-			LastSeen: m.LastSeen, CategoryID: m.CategoryID,
+			Name: m.Name, Kind: m.Kind, Label: m.Label, SeenCount: m.SeenCount,
+			Total: toMoney(m.Total), LastSeen: m.LastSeen, CategoryID: m.CategoryID,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -311,7 +314,8 @@ func (s *Server) handleListMerchants(w http.ResponseWriter, r *http.Request) {
 
 type assignMerchantReq struct {
 	Name       string `json:"name"`
-	CategoryID string `json:"categoryId"` // "" => сбросить привязку
+	CategoryID string `json:"categoryId"` // "" => сбросить категорию
+	Label      string `json:"label"`      // "" => убрать название
 }
 
 func (s *Server) handleAssignMerchant(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +324,7 @@ func (s *Server) handleAssignMerchant(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.user(r).SMS.AssignMerchantCategory(req.Name, req.CategoryID); err != nil {
+	if err := s.user(r).SMS.AssignMerchant(req.Name, req.CategoryID, req.Label); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

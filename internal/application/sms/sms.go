@@ -27,7 +27,8 @@ type Template struct {
 	Pattern           string // regex по тексту SMS
 	AmountGroup       int    // номер группы суммы (>=1)
 	CurrencyGroup     int    // номер группы валюты; 0 => FixedCurrency
-	MerchantGroup     int    // номер группы контрагента; 0 => не захватывать
+	MerchantGroup     int    // номер группы признака (контрагент/счёт); 0 => не захватывать
+	CaptureKind       string // что ловит MerchantGroup: "merchant" (контрагент) | "account" (счёт)
 	FixedCurrency     string
 	Type              core.EntryType
 	DefaultCategoryID string // "" => операция уйдёт во «входящие» на ручную категоризацию
@@ -58,7 +59,8 @@ type ParseResult struct {
 	TemplateName      string
 	Amount            money.Money
 	Type              core.EntryType
-	Merchant          string // название контрагента, если захвачено (MerchantGroup)
+	Merchant          string // захваченный признак (контрагент или счёт), если есть
+	Kind              string // тип признака: "merchant" | "account" (из шаблона)
 	DefaultCategoryID string
 }
 
@@ -95,27 +97,45 @@ type RuleRepo interface {
 	Delete(id string) error
 }
 
-// MerchantEntry — запись справочника контрагентов: сколько раз встречался контрагент
-// в SMS, на какую сумму, когда в последний раз и какая категория к нему привязана.
+// Тип признака распознавания.
+const (
+	KindMerchant = "merchant" // контрагент (мерчант из покупки) — имя читаемо
+	KindAccount  = "account"  // счёт (ЕРИП/перевод) — номер, нужен ярлык
+)
+
+// normalizeKind приводит тип к допустимому ("merchant" по умолчанию).
+func normalizeKind(k string) string {
+	if k == KindAccount {
+		return KindAccount
+	}
+	return KindMerchant
+}
+
+// MerchantEntry — запись строгого списка распознавания: признак из SMS
+// (контрагент или счёт), сколько раз встречался, оборот, дата, тип, ярлык и
+// закреплённая категория.
 type MerchantEntry struct {
-	Name       string
+	Name       string // сам признак (токен из SMS): имя мерчанта или номер счёта
+	Kind       string // "merchant" | "account"
+	Label      string // человеческое название (для счетов), показывается в операции
 	SeenCount  int
 	Total      money.Money
 	LastSeen   string // YYYY-MM-DD
-	CategoryID string // категория, закреплённая за контрагентом (точная привязка)
+	CategoryID string // категория, закреплённая за признаком (точная привязка)
 }
 
-// MerchantRepo — строгий список контрагентов (по владельцу): точное совпадение
-// по имени, категория закреплена прямо за контрагентом.
+// MerchantRepo — строгий список распознавания (по владельцу): точное совпадение
+// по имени; тип, ярлык и категория закреплены за записью.
 type MerchantRepo interface {
-	// Observe регистрирует встречу контрагента: +1 к счётчику, +сумма к обороту.
-	Observe(name string, amount money.Money, on core.Date) error
-	List() ([]*MerchantEntry, error)                       // по убыванию частоты
-	SetCategory(name, categoryID string) error             // закрепить категорию (точно)
-	CategoryOf(name string) (categoryID string, err error) // категория контрагента или ""
+	// Observe регистрирует встречу признака: +1 к счётчику, +сумма к обороту.
+	// kind проставляется при создании записи (из шаблона).
+	Observe(name, kind string, amount money.Money, on core.Date) error
+	List() ([]*MerchantEntry, error)             // по убыванию частоты
+	Assign(name, categoryID, label string) error // закрепить категорию и ярлык
+	Entry(name string) (*MerchantEntry, error)   // запись или nil, если нет
 }
 
-// UnknownMerchant — метка операции, когда контрагент из SMS не распознан.
+// UnknownMerchant — метка операции, когда признак из SMS не распознан.
 const UnknownMerchant = "Контрагент (Неизвестно)"
 
 // Service — сервис разбора SMS.
@@ -134,20 +154,20 @@ func New(templates TemplateRepo, drafts DraftRepo, rules RuleRepo, merchants Mer
 	return &Service{templates: templates, drafts: drafts, rules: rules, merchants: merchants, ledger: ledger, clock: clock, ids: ids}
 }
 
-// ListMerchants возвращает строгий список контрагентов; категория берётся прямо
-// из закреплённой за контрагентом (точная привязка, не подстрока).
+// ListMerchants возвращает строгий список распознавания (контрагенты и счета);
+// категория и ярлык берутся прямо из записи (точная привязка, не подстрока).
 func (s *Service) ListMerchants() ([]*MerchantEntry, error) {
 	return s.merchants.List()
 }
 
-// AssignMerchantCategory закрепляет категорию за контрагентом (точно). Пустой
-// categoryID сбрасывает привязку.
-func (s *Service) AssignMerchantCategory(name, categoryID string) error {
+// AssignMerchant закрепляет категорию и ярлык за признаком (точно). Пустой
+// categoryID сбрасывает категорию; пустой label убирает название.
+func (s *Service) AssignMerchant(name, categoryID, label string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("sms: пустое имя контрагента")
+		return fmt.Errorf("sms: пустой признак")
 	}
-	return s.merchants.SetCategory(name, categoryID)
+	return s.merchants.Assign(name, categoryID, strings.TrimSpace(label))
 }
 
 // --- Правила «контрагент → категория» ---
@@ -275,28 +295,32 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 		return IngestOutcome{}, err
 	}
 
-	// Контрагент распознан — учитываем его в строгом списке (частота/оборот), даже
-	// если операция уйдёт во «входящие».
+	// Признак распознан — учитываем его в строгом списке (частота/оборот), тип из
+	// шаблона. Заодно берём запись для категории и ярлыка.
+	var entry *MerchantEntry
 	if res.Matched && res.Merchant != "" {
-		_ = s.merchants.Observe(res.Merchant, res.Amount, receivedAt)
+		_ = s.merchants.Observe(res.Merchant, res.Kind, res.Amount, receivedAt)
+		entry, _ = s.merchants.Entry(res.Merchant)
 	}
 
 	// Категория, по приоритету:
-	//   1) закреплённая за контрагентом (точное совпадение имени);
+	//   1) закреплённая за признаком (точное совпадение);
 	//   2) правило-подстрока (доп. слой для массовых паттернов);
 	//   3) дефолт шаблона.
 	category := res.DefaultCategoryID
-	if res.Matched && res.Merchant != "" {
-		if mc, _ := s.merchants.CategoryOf(res.Merchant); mc != "" {
-			category = mc
-		} else if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
+	if entry != nil && entry.CategoryID != "" {
+		category = entry.CategoryID
+	} else if res.Matched && res.Merchant != "" {
+		if ruleCat := s.matchRule(res.Merchant); ruleCat != "" {
 			category = ruleCat
 		}
 	}
 
-	// Есть категория — создаём операцию сразу.
+	// Есть категория — создаём операцию сразу. Примечание: ярлык записи, иначе сам
+	// признак, иначе «Неизвестно».
 	if res.Matched && category != "" {
-		tx, err := s.ledger.Add(res.Type, receivedAt, category, res.Amount, smsNote(res.Merchant, text))
+		note := smsNote(res.Merchant, entryLabel(entry))
+		tx, err := s.ledger.Add(res.Type, receivedAt, category, res.Amount, note)
 		if err != nil {
 			return IngestOutcome{}, err
 		}
@@ -325,13 +349,24 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	return IngestOutcome{Matched: res.Matched, DraftID: d.ID}, nil
 }
 
-// smsNote формирует примечание операции из SMS: имя контрагента, если захвачен,
-// иначе метка «Контрагент (Неизвестно)».
-func smsNote(merchant, _ string) string {
+// smsNote формирует примечание операции: человеческий ярлык (если задан), иначе
+// сам признак (имя мерчанта/номер счёта), иначе метка «Контрагент (Неизвестно)».
+func smsNote(merchant, label string) string {
+	if label != "" {
+		return label
+	}
 	if merchant != "" {
 		return merchant
 	}
 	return UnknownMerchant
+}
+
+// entryLabel безопасно достаёт ярлык записи (или "" если записи нет).
+func entryLabel(e *MerchantEntry) string {
+	if e == nil {
+		return ""
+	}
+	return e.Label
 }
 
 // parseWith применяет шаблоны по порядку и возвращает первый успешный разбор.
@@ -375,6 +410,7 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 			Amount:            amt,
 			Type:              t.Type,
 			Merchant:          merchant,
+			Kind:              normalizeKind(t.CaptureKind),
 			DefaultCategoryID: t.DefaultCategoryID,
 		}, nil
 	}
@@ -440,9 +476,14 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	if err := s.drafts.Save(d); err != nil {
 		return nil, err
 	}
-	// Запомнить: закрепить категорию за контрагентом (точно) для будущих SMS.
+	// Запомнить: закрепить категорию за признаком (точно) для будущих SMS,
+	// сохранив уже заданный ярлык (если был).
 	if rememberMerchant && d.Merchant != "" {
-		_ = s.merchants.SetCategory(d.Merchant, categoryID)
+		label := ""
+		if e, _ := s.merchants.Entry(d.Merchant); e != nil {
+			label = e.Label
+		}
+		_ = s.merchants.Assign(d.Merchant, categoryID, label)
 	}
 	return tx, nil
 }

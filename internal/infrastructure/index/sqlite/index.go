@@ -305,6 +305,16 @@ var migrations = []migration{
 				WHERE category_id = ''`,
 		},
 	},
+	{
+		// v9: тип признака (контрагент/счёт) и человеческий ярлык у записи; шаблон
+		// объявляет, что ловит его группа признака (merchant|account).
+		version: 9,
+		stmts: []string{
+			`ALTER TABLE merchants ADD COLUMN kind TEXT NOT NULL DEFAULT 'merchant'`,
+			`ALTER TABLE merchants ADD COLUMN label TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sms_templates ADD COLUMN capture_kind TEXT NOT NULL DEFAULT 'merchant'`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

@@ -18,17 +18,17 @@ func (i *Index) SMSTemplates() *SMSTemplateRepo { return &SMSTemplateRepo{idx: i
 
 func (r *SMSTemplateRepo) Save(t *smssvc.Template) error {
 	_, err := r.idx.db.Exec(`INSERT INTO sms_templates(
-			id,name,sender,pattern,amount_group,currency_group,merchant_group,fixed_currency,type,
+			id,name,sender,pattern,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,
 			default_category_id,enabled,priority,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, sender=excluded.sender, pattern=excluded.pattern,
 			amount_group=excluded.amount_group, currency_group=excluded.currency_group,
-			merchant_group=excluded.merchant_group,
+			merchant_group=excluded.merchant_group, capture_kind=excluded.capture_kind,
 			fixed_currency=excluded.fixed_currency, type=excluded.type,
 			default_category_id=excluded.default_category_id, enabled=excluded.enabled,
 			priority=excluded.priority`,
-		t.ID, t.Name, t.Sender, t.Pattern, t.AmountGroup, t.CurrencyGroup, t.MerchantGroup, t.FixedCurrency,
+		t.ID, t.Name, t.Sender, t.Pattern, t.AmountGroup, t.CurrencyGroup, t.MerchantGroup, t.CaptureKind, t.FixedCurrency,
 		string(t.Type), nullStr(t.DefaultCategoryID), boolToInt(t.Enabled), t.Priority,
 		t.CreatedAt.UTC().Format(rfc3339))
 	return err
@@ -52,7 +52,7 @@ func (r *SMSTemplateRepo) Delete(id string) error {
 	return err
 }
 
-const templateCols = `SELECT id,name,sender,pattern,amount_group,currency_group,merchant_group,fixed_currency,type,default_category_id,enabled,priority,created_at FROM sms_templates`
+const templateCols = `SELECT id,name,sender,pattern,amount_group,currency_group,merchant_group,capture_kind,fixed_currency,type,default_category_id,enabled,priority,created_at FROM sms_templates`
 
 func (r *SMSTemplateRepo) query(q string, args ...any) ([]*smssvc.Template, error) {
 	rows, err := r.idx.db.Query(q, args...)
@@ -78,7 +78,7 @@ func scanTemplate(sc scanner) (*smssvc.Template, error) {
 	var enabled int
 	var created string
 	if err := sc.Scan(&t.ID, &t.Name, &t.Sender, &t.Pattern, &t.AmountGroup, &t.CurrencyGroup,
-		&t.MerchantGroup, &t.FixedCurrency, &typ, &defCat, &enabled, &t.Priority, &created); err != nil {
+		&t.MerchantGroup, &t.CaptureKind, &t.FixedCurrency, &typ, &defCat, &enabled, &t.Priority, &created); err != nil {
 		return nil, err
 	}
 	t.Type = core.EntryType(typ)
