@@ -243,6 +243,43 @@ func (s *Service) UpdateTemplate(id string, patch *Template) (*Template, error) 
 
 func (s *Service) DeleteTemplate(id string) error { return s.templates.Delete(id) }
 
+// CreateTemplateFromSample собирает шаблон «по образцу» из выделенных в реальном
+// SMS полей, привязывает выбранную категорию (к признаку, если он выделен, иначе
+// в дефолт шаблона) и, если задан draftID, тут же переразбирает это сообщение в
+// операцию и убирает черновик. Возвращает шаблон и ID созданной операции ("" если
+// не создалась).
+func (s *Service) CreateTemplateFromSample(spec SampleSpec, categoryID, draftID string) (*Template, string, error) {
+	// Категория при наличии признака закрепляется за признаком, а не за шаблоном.
+	if strings.TrimSpace(spec.MerchantText) != "" {
+		spec.DefaultCategoryID = ""
+	} else {
+		spec.DefaultCategoryID = categoryID
+	}
+	t, err := SynthesizeTemplate(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	t.ID = s.ids.NewID()
+	t.CreatedAt = s.clock.Now().UTC()
+	if err := s.templates.Save(t); err != nil {
+		return nil, "", err
+	}
+	if merchant := strings.TrimSpace(spec.MerchantText); merchant != "" && categoryID != "" {
+		_ = s.merchants.Assign(merchant, categoryID, "")
+	}
+
+	txID := ""
+	if draftID != "" {
+		if d, err := s.drafts.Get(draftID); err == nil {
+			if out, err := s.Ingest(d.RawSender, d.RawText, d.ReceivedAt); err == nil && out.TransactionID != "" {
+				txID = out.TransactionID
+				_ = s.drafts.Delete(draftID)
+			}
+		}
+	}
+	return t, txID, nil
+}
+
 func validateTemplate(t *Template) error {
 	if strings.TrimSpace(t.Name) == "" {
 		return fmt.Errorf("sms: имя шаблона обязательно")

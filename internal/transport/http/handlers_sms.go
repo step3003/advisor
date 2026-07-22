@@ -167,6 +167,44 @@ func (s *Server) handleDeleteSMSTemplate(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// fromSampleReq — сборка шаблона «по образцу» из выделенных полей реального SMS.
+type fromSampleReq struct {
+	DraftID       string `json:"draftId"`
+	Name          string `json:"name"`
+	Sender        string `json:"sender"`
+	Text          string `json:"text"`
+	AmountText    string `json:"amountText"`
+	CurrencyText  string `json:"currencyText"`
+	FixedCurrency string `json:"fixedCurrency"`
+	MerchantText  string `json:"merchantText"`
+	CaptureKind   string `json:"captureKind"`
+	Type          string `json:"type"`
+	CategoryID    string `json:"categoryId"`
+}
+
+func (s *Server) handleTemplateFromSample(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		writeErr(w, http.StatusForbidden, "шаблоны разбора — общие; менять может только админ")
+		return
+	}
+	var req fromSampleReq
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	spec := smssvc.SampleSpec{
+		Name: req.Name, Sender: req.Sender, Text: req.Text,
+		AmountText: req.AmountText, CurrencyText: req.CurrencyText, FixedCurrency: req.FixedCurrency,
+		MerchantText: req.MerchantText, CaptureKind: req.CaptureKind, Type: core.EntryType(req.Type),
+	}
+	t, txID, err := s.user(r).SMS.CreateTemplateFromSample(spec, req.CategoryID, req.DraftID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"template": toSMSTemplateDTO(t), "transactionId": txID})
+}
+
 type testSMSReq struct {
 	Sender string `json:"sender"`
 	Text   string `json:"text"`

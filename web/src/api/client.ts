@@ -178,6 +178,23 @@ export const createRule = (pattern: string, categoryId: string, priority = 0) =>
   req<CategoryRule>("POST", "/api/sms/rules", { pattern, categoryId, priority });
 export const deleteRule = (id: string) => req<void>("DELETE", `/api/sms/rules/${id}`);
 
+// --- Сборка шаблона «по образцу» ---
+export interface FromSampleReq {
+  draftId?: string;
+  name: string;
+  sender: string;
+  text: string;
+  amountText: string;
+  currencyText: string;
+  fixedCurrency: string;
+  merchantText: string;
+  captureKind: string;
+  type: EntryType;
+  categoryId: string;
+}
+export const createTemplateFromSample = (input: FromSampleReq) =>
+  req<{ template: SmsTemplate; transactionId: string }>("POST", "/api/sms/templates/from-sample", input);
+
 // --- Справочник контрагентов ---
 export const listMerchants = () => req<Merchant[]>("GET", "/api/sms/merchants");
 // Закрепить категорию и название за признаком (точно). Пустые значения — сброс.

@@ -155,6 +155,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// Настройка разбора SMS в кабинете (шаблоны + тест + входящие).
 	mux.HandleFunc("GET /api/sms/templates", s.handleListSMSTemplates)
 	mux.HandleFunc("POST /api/sms/templates", s.handleCreateSMSTemplate)
+	mux.HandleFunc("POST /api/sms/templates/from-sample", s.handleTemplateFromSample)
 	mux.HandleFunc("PATCH /api/sms/templates/{id}", s.handleUpdateSMSTemplate)
 	mux.HandleFunc("DELETE /api/sms/templates/{id}", s.handleDeleteSMSTemplate)
 	mux.HandleFunc("POST /api/sms/test", s.handleTestSMS)

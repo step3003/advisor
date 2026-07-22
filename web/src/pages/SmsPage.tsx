@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Card,
   Checkbox,
@@ -19,6 +20,7 @@ import {
   TextInput,
   Textarea,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { IconEdit, IconPlus, IconTrash, IconTestPipe } from "@tabler/icons-react";
@@ -27,6 +29,7 @@ import {
   assignMerchant,
   createRule,
   createSmsTemplate,
+  createTemplateFromSample,
   deleteDraft,
   deleteRule,
   deleteSmsTemplate,
@@ -82,6 +85,10 @@ export function SmsPage() {
   // Разбор черновика.
   const [resolveOpened, resolveDlg] = useDisclosure(false);
   const [draft, setDraft] = useState<InboxDraft | null>(null);
+
+  // Сборка шаблона «по образцу».
+  const [teachOpened, teach] = useDisclosure(false);
+  const [teachDraft, setTeachDraft] = useState<InboxDraft | null>(null);
 
   async function load() {
     try {
@@ -254,6 +261,9 @@ export function SmsPage() {
                 <Table.Td>{d.amount ? formatMoney(d.amount) : <Text c="dimmed" size="sm">?</Text>}</Table.Td>
                 <Table.Td>
                   <Group gap={4} justify="flex-end" wrap="nowrap">
+                    {isAdmin && (
+                      <Button size="xs" variant="light" color="grape" onClick={() => { setTeachDraft(d); teach.open(); }}>По образцу</Button>
+                    )}
                     <Button size="xs" variant="light" onClick={() => openResolve(d)}>Разобрать</Button>
                     <ActionIcon variant="subtle" color="red" onClick={async () => { await deleteDraft(d.id); void load(); }}><IconTrash size={16} /></ActionIcon>
                   </Group>
@@ -270,6 +280,9 @@ export function SmsPage() {
       <TemplateModal opened={tplOpened} onClose={tpl.close} form={form} setForm={setForm} onSave={saveTemplate} />
       {draft && (
         <ResolveModal opened={resolveOpened} onClose={resolveDlg.close} draft={draft} onDone={async () => { resolveDlg.close(); await load(); }} />
+      )}
+      {teachDraft && (
+        <TeachModal opened={teachOpened} onClose={teach.close} draft={teachDraft} onDone={async () => { teach.close(); await load(); }} />
       )}
     </Stack>
   );
@@ -505,6 +518,142 @@ function AccountRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
         </div>
       </Table.Td>
     </Table.Tr>
+  );
+}
+
+// --- Сборка шаблона «по образцу» ---
+
+type TeachRole = "amount" | "currency" | "merchant";
+interface Tok { text: string; start: number; end: number; }
+
+function tokenize(s: string): Tok[] {
+  const out: Tok[] = [];
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) out.push({ text: m[0], start: m.index, end: m.index + m[0].length });
+  return out;
+}
+
+const ROLE_COLOR: Record<TeachRole, string> = { amount: "blue", currency: "teal", merchant: "grape" };
+
+// TeachModal — учим разбор на реальном SMS: тыкаем в слова, отмечая сумму/валюту/
+// признак; система собирает regex-шаблон и сразу создаёт операцию.
+function TeachModal({ opened, onClose, draft, onDone }: {
+  opened: boolean; onClose: () => void; draft: InboxDraft; onDone: () => void;
+}) {
+  const tokens = useMemo(() => tokenize(draft.rawText), [draft.rawText]);
+  const [role, setRole] = useState<TeachRole>("amount");
+  const [amountI, setAmountI] = useState<number | null>(null);
+  const [currI, setCurrI] = useState<number | null>(null);
+  const [merchIs, setMerchIs] = useState<number[]>([]);
+  const [kind, setKind] = useState<SignalKind>("merchant");
+  const [type, setType] = useState<EntryType>(draft.type ?? "expense");
+  const [catId, setCatId] = useState<string | null>(null);
+  const [name, setName] = useState(draft.rawSender || "Новый шаблон");
+
+  function click(i: number) {
+    if (role === "amount") setAmountI((p) => (p === i ? null : i));
+    else if (role === "currency") setCurrI((p) => (p === i ? null : i));
+    else setMerchIs((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i].sort((a, b) => a - b)));
+  }
+  function roleOf(i: number): TeachRole | null {
+    if (i === amountI) return "amount";
+    if (i === currI) return "currency";
+    if (merchIs.includes(i)) return "merchant";
+    return null;
+  }
+
+  const amountText = amountI != null ? tokens[amountI].text : "";
+  const currencyText = currI != null ? tokens[currI].text : "";
+  const merchantText = merchIs.length
+    ? draft.rawText.slice(tokens[merchIs[0]].start, tokens[merchIs[merchIs.length - 1]].end)
+    : "";
+
+  async function save() {
+    if (!amountText) { notifyError(new Error("Отметьте сумму")); return; }
+    if (!catId) { notifyError(new Error("Выберите категорию")); return; }
+    try {
+      const res = await createTemplateFromSample({
+        draftId: draft.id, name, sender: draft.rawSender, text: draft.rawText,
+        amountText, currencyText, fixedCurrency: currencyText ? "" : "BYN",
+        merchantText, captureKind: kind, type, categoryId: catId,
+      });
+      onDone();
+      notifyOk(res.transactionId ? "Шаблон создан, операция добавлена" : "Шаблон создан");
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Шаблон по образцу" size="lg">
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          Выбери роль ниже, затем ткни в нужные слова сообщения. Признак (контрагент или счёт)
+          можно собрать из нескольких соседних слов.
+        </Text>
+        <Group gap="xs">
+          <Button size="xs" variant={role === "amount" ? "filled" : "light"} color="blue" onClick={() => setRole("amount")}>Сумма</Button>
+          <Button size="xs" variant={role === "currency" ? "filled" : "light"} color="teal" onClick={() => setRole("currency")}>Валюта</Button>
+          <Button size="xs" variant={role === "merchant" ? "filled" : "light"} color="grape" onClick={() => setRole("merchant")}>Контрагент / счёт</Button>
+        </Group>
+
+        <Box style={{ lineHeight: 2.2, padding: 8, border: "1px solid var(--mantine-color-default-border)", borderRadius: 6 }}>
+          {tokens.map((tok, i) => {
+            const r = roleOf(i);
+            return (
+              <UnstyledButton
+                key={i}
+                onClick={() => click(i)}
+                style={{
+                  padding: "2px 5px", margin: 1, borderRadius: 4,
+                  fontFamily: "monospace", fontSize: 13,
+                  background: r ? `var(--mantine-color-${ROLE_COLOR[r]}-light)` : "transparent",
+                  color: r ? `var(--mantine-color-${ROLE_COLOR[r]}-light-color)` : undefined,
+                }}
+              >
+                {tok.text}
+              </UnstyledButton>
+            );
+          })}
+        </Box>
+
+        <Group gap="lg" wrap="wrap">
+          <Text size="sm"><b>Сумма:</b> {amountText || "—"}</Text>
+          <Text size="sm"><b>Валюта:</b> {currencyText || "BYN (по умолч.)"}</Text>
+          <Text size="sm"><b>{kind === "account" ? "Счёт" : "Контрагент"}:</b> {merchantText || "—"}</Text>
+        </Group>
+
+        {merchantText && (
+          <SegmentedControl
+            size="xs"
+            value={kind}
+            onChange={(v) => setKind(v as SignalKind)}
+            data={[{ label: "Это контрагент", value: "merchant" }, { label: "Это счёт", value: "account" }]}
+          />
+        )}
+
+        <TextInput label="Название шаблона" value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        <SegmentedControl
+          value={type}
+          onChange={(v) => { setType(v as EntryType); setCatId(null); }}
+          data={[{ label: "Расход", value: "expense" }, { label: "Доход", value: "income" }]}
+          fullWidth
+        />
+        <CategorySelect
+          type={type}
+          value={catId}
+          onChange={setCatId}
+          required
+          label={merchantText ? "Категория для этого контрагента/счёта" : "Категория для всех таких сообщений"}
+        />
+
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Отмена</Button>
+          <Button onClick={save}>Создать шаблон</Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 

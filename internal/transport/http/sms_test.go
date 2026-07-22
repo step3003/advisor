@@ -288,6 +288,69 @@ func TestSMSMerchantExactAssign(t *testing.T) {
 	}
 }
 
+func TestSMSTemplateFromSample(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Такси", Type: "expense"}, true)
+	var taxi categoryDTO
+	mustJSON(t, body, &taxi)
+
+	// Незнакомое SMS → черновик (шаблонов ещё нет).
+	_, body = do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": "Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN", "receivedAt": "2026-07-22",
+	}, true)
+	var ing map[string]any
+	mustJSON(t, body, &ing)
+	draftID, _ := ing["draftId"].(string)
+	if draftID == "" {
+		t.Fatalf("ожидался черновик, got %v", ing)
+	}
+
+	// Учим по образцу: выделяем сумму/валюту/контрагента + категория.
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates/from-sample", map[string]any{
+		"draftId": draftID, "name": "Приор", "sender": "Priorbank",
+		"text":         "Oplata 14.70 BYN. BLR YANDEX.GO. Balance: 19.26 BYN",
+		"amountText":   "14.70",
+		"currencyText": "BYN",
+		"merchantText": "YANDEX.GO",
+		"captureKind":  "merchant",
+		"type":         "expense",
+		"categoryId":   taxi.ID,
+	}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("from-sample: %d — %s", rec.Code, body)
+	}
+	var res map[string]any
+	mustJSON(t, body, &res)
+	if res["transactionId"] == "" {
+		t.Fatalf("ожидалась созданная операция, got %v", res)
+	}
+
+	// Операция создалась в Такси, черновик исчез.
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 || txs[0].CategoryID != taxi.ID || txs[0].Note != "YANDEX.GO" || txs[0].Amount.Amount != "14.70" {
+		t.Fatalf("ожидалась 1 операция 14.70 YANDEX.GO в Такси, got %+v", txs)
+	}
+	_, body = do(t, s, http.MethodGet, "/api/inbox?unresolvedOnly=true", nil, true)
+	var drafts []draftDTO
+	mustJSON(t, body, &drafts)
+	if len(drafts) != 0 {
+		t.Fatalf("черновик должен был исчезнуть, осталось %d", len(drafts))
+	}
+
+	// Новое SMS того же формата и контрагента — теперь разносится само.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank", "text": "Oplata 5.00 BYN. BLR YANDEX.GO. Balance: 1.00 BYN", "receivedAt": "2026-07-22",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	mustJSON(t, body, &txs)
+	if len(txs) != 2 {
+		t.Fatalf("второе SMS должно было авто-разнестись, операций %d", len(txs))
+	}
+}
+
 func TestSMSAccountKindAndLabel(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",
