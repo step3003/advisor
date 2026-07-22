@@ -66,6 +66,23 @@ func (s *Service) AddFromRecurring(typ core.EntryType, on core.Date, categoryID 
 	return t, nil
 }
 
+// AddFromSMS создаёт факт из разобранного SMS с привязкой к признаку
+// (merchantKey) — для живого подсчёта оборота/частоты в справочнике.
+func (s *Service) AddFromSMS(typ core.EntryType, on core.Date, categoryID string, amount money.Money, note, merchantKey string) (*transaction.Transaction, error) {
+	if err := s.validateCategory(categoryID, typ); err != nil {
+		return nil, err
+	}
+	t, err := transaction.New(s.ids.NewID(), typ, on, categoryID, amount, note, s.clock.Now())
+	if err != nil {
+		return nil, err
+	}
+	t.MerchantKey = merchantKey
+	if err := s.txs.Save(t); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // Edit изменяет операцию (FR-TX-2).
 func (s *Service) Edit(id string, on core.Date, categoryID string, amount money.Money, note string) (*transaction.Transaction, error) {
 	t, err := s.txs.Get(id)

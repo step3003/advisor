@@ -315,6 +315,21 @@ var migrations = []migration{
 			`ALTER TABLE sms_templates ADD COLUMN capture_kind TEXT NOT NULL DEFAULT 'merchant'`,
 		},
 	},
+	{
+		// v10: связь операции с признаком (merchant_key) — чтобы оборот/частота в
+		// справочнике считались вживую из операций (удаление/правка пересчитывают
+		// сами). Бэкофилл: существующие SMS-операции, чьё примечание точно совпало с
+		// именем признака.
+		version: 10,
+		stmts: []string{
+			`ALTER TABLE transactions ADD COLUMN merchant_key TEXT NULL`,
+			`UPDATE transactions SET merchant_key = note
+				WHERE (merchant_key IS NULL OR merchant_key = '')
+				  AND note IS NOT NULL
+				  AND note IN (SELECT name FROM merchants WHERE merchants.owner_id = transactions.owner_id)`,
+			`CREATE INDEX IF NOT EXISTS ix_tx_merchant ON transactions(owner_id, merchant_key)`,
+		},
+	},
 }
 
 // migrate применяет недостающие версии схемы (NFR-6: версионирование, авто-миграция).

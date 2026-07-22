@@ -210,18 +210,19 @@ func (r *TransactionRepo) Save(t *transaction.Transaction) error {
 }
 
 func upsertTransactionRow(q execer, owner string, t *transaction.Transaction) error {
-	_, err := q.Exec(`INSERT INTO transactions(id,owner_id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,created_at,rev,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := q.Exec(`INSERT INTO transactions(id,owner_id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,merchant_key,created_at,rev,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET occurred_on=excluded.occurred_on, type=excluded.type,
 			category_id=excluded.category_id, amount_minor=excluded.amount_minor, currency=excluded.currency,
-			note=excluded.note, recurring_id=excluded.recurring_id, rev=excluded.rev, updated_at=excluded.updated_at`,
+			note=excluded.note, recurring_id=excluded.recurring_id, merchant_key=excluded.merchant_key,
+			rev=excluded.rev, updated_at=excluded.updated_at`,
 		t.Meta.ID, owner, t.OccurredOn.String(), string(t.Type), t.CategoryID, t.Amount.Minor(),
-		t.Amount.Currency().String(), nullStr(t.Note), nullStr(t.RecurringID),
+		t.Amount.Currency().String(), nullStr(t.Note), nullStr(t.RecurringID), nullStr(t.MerchantKey),
 		t.CreatedAt.UTC().Format(time.RFC3339), t.Meta.Rev, t.Meta.UpdatedAt.UTC().Format(time.RFC3339))
 	return err
 }
 
-const txCols = `id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,created_at,rev,updated_at`
+const txCols = `id,occurred_on,type,category_id,amount_minor,currency,note,recurring_id,merchant_key,created_at,rev,updated_at`
 
 func (r *TransactionRepo) Get(id string) (*transaction.Transaction, error) {
 	row := r.idx.db.QueryRow(`SELECT `+txCols+` FROM transactions WHERE id=? AND owner_id=?`, id, r.owner)
@@ -287,10 +288,10 @@ func (r *TransactionRepo) Delete(id string) error {
 func scanTransaction(s scanner) (*transaction.Transaction, error) {
 	var (
 		id, occurredOn, typ, categoryID, currency, createdAt, updatedAt string
-		note, recurringID                                               sql.NullString
+		note, recurringID, merchantKey                                  sql.NullString
 		amountMinor, rev                                                int64
 	)
-	if err := s.Scan(&id, &occurredOn, &typ, &categoryID, &amountMinor, &currency, &note, &recurringID, &createdAt, &rev, &updatedAt); err != nil {
+	if err := s.Scan(&id, &occurredOn, &typ, &categoryID, &amountMinor, &currency, &note, &recurringID, &merchantKey, &createdAt, &rev, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ports.ErrRecordNotFound
 		}
@@ -314,6 +315,7 @@ func scanTransaction(s scanner) (*transaction.Transaction, error) {
 		Amount:      amount,
 		Note:        note.String,
 		RecurringID: recurringID.String,
+		MerchantKey: merchantKey.String,
 		CreatedAt:   created,
 	}, nil
 }

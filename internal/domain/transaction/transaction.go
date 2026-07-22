@@ -33,6 +33,7 @@ type Transaction struct {
 	Amount      money.Money
 	Note        string
 	RecurringID string // "" => обычная операция; иначе ID породившего шаблона
+	MerchantKey string // "" => не из SMS; иначе признак (контрагент/счёт), породивший операцию
 
 	CreatedAt time.Time // UTC
 }

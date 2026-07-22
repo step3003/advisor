@@ -34,20 +34,52 @@ func (r *MerchantRepo) Observe(name, kind string, amount money.Money, on core.Da
 	return err
 }
 
+// List возвращает признаки с живым подсчётом оборота/частоты по фактическим
+// операциям (merchant_key), чтобы удаление/правка операций сразу отражались.
 func (r *MerchantRepo) List() ([]*smssvc.MerchantEntry, error) {
-	rows, err := r.idx.db.Query(`SELECT name,kind,label,seen_count,total_minor,currency,last_seen,category_id
-			FROM merchants WHERE owner_id=? ORDER BY seen_count DESC, last_seen DESC`, r.owner)
+	rows, err := r.idx.db.Query(`SELECT m.name, m.kind, m.label, m.category_id, m.currency, m.last_seen,
+			COALESCE(t.cnt, 0), COALESCE(t.total, 0), t.cur, t.last
+		FROM merchants m
+		LEFT JOIN (
+			SELECT merchant_key AS k, COUNT(*) AS cnt, SUM(amount_minor) AS total,
+				MAX(currency) AS cur, MAX(occurred_on) AS last
+			FROM transactions
+			WHERE owner_id=? AND merchant_key IS NOT NULL AND merchant_key<>''
+			GROUP BY merchant_key
+		) t ON t.k = m.name
+		WHERE m.owner_id=?
+		ORDER BY COALESCE(t.cnt, 0) DESC, m.last_seen DESC`, r.owner, r.owner)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	var out []*smssvc.MerchantEntry
 	for rows.Next() {
-		e, err := scanMerchant(rows)
-		if err != nil {
+		var (
+			name, kind, label, catID, mCur, mLast string
+			count                                 int
+			totalMinor                            int64
+			txCur, txLast                         sql.NullString
+		)
+		if err := rows.Scan(&name, &kind, &label, &catID, &mCur, &mLast, &count, &totalMinor, &txCur, &txLast); err != nil {
 			return nil, err
 		}
-		out = append(out, e)
+		cur := mCur
+		if txCur.Valid && txCur.String != "" {
+			cur = txCur.String
+		}
+		lastSeen := mLast
+		if txLast.Valid && txLast.String != "" {
+			lastSeen = txLast.String
+		}
+		total, err := money.New(totalMinor, money.Currency(cur))
+		if err != nil {
+			total, _ = money.New(0, money.BaseCurrency)
+		}
+		out = append(out, &smssvc.MerchantEntry{
+			Name: name, Kind: kind, Label: label, SeenCount: count,
+			Total: total, LastSeen: lastSeen, CategoryID: catID,
+		})
 	}
 	return out, rows.Err()
 }

@@ -163,12 +163,17 @@ func TestSMSMerchantRule(t *testing.T) {
 
 func TestSMSMerchantDirectory(t *testing.T) {
 	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Покупки", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
 
-	// Шаблон с захватом контрагента, но БЕЗ категории → операции идут во «входящие»,
-	// а контрагенты копятся в справочнике.
+	// Шаблон с категорией и захватом контрагента → разборы становятся операциями,
+	// а справочник считает оборот/частоту вживую по операциям.
 	tmpl := smsTemplateDTO{
 		Name: "Оплата", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
-		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", Enabled: true,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense",
+		DefaultCategoryID: cat.ID, Enabled: true,
 	}
 	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
 	if rec.Code != http.StatusCreated {
@@ -192,10 +197,38 @@ func TestSMSMerchantDirectory(t *testing.T) {
 	if len(merchants) != 2 {
 		t.Fatalf("ожидалось 2 контрагента, got %d: %+v", len(merchants), merchants)
 	}
-	// Первым — самый частый (YANDEX.GO: 2 раза, оборот 20.00).
+	// Первым — самый частый (YANDEX.GO: 2 операции, оборот 20.00).
 	top := merchants[0]
 	if top.Name != "YANDEX.GO" || top.SeenCount != 2 || top.Total.Amount != "20.00" {
 		t.Fatalf("ожидался YANDEX.GO ×2 на 20.00, got %+v", top)
+	}
+
+	// Удаляем одну операцию YANDEX.GO — счётчик/оборот должны пересчитаться.
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	var delID string
+	for _, tx := range txs {
+		if tx.Note == "YANDEX.GO" {
+			delID = tx.ID
+			break
+		}
+	}
+	if delID == "" {
+		t.Fatal("не нашли операцию YANDEX.GO для удаления")
+	}
+	do(t, s, http.MethodDelete, "/api/transactions/"+delID, nil, true)
+
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	mustJSON(t, body, &merchants)
+	var yandex merchantDTO
+	for _, m := range merchants {
+		if m.Name == "YANDEX.GO" {
+			yandex = m
+		}
+	}
+	if yandex.SeenCount != 1 {
+		t.Fatalf("после удаления ожидался YANDEX.GO ×1, got %+v", yandex)
 	}
 }
 

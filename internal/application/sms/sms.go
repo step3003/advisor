@@ -320,7 +320,7 @@ func (s *Service) Ingest(sender, text string, receivedAt core.Date) (IngestOutco
 	// признак, иначе «Неизвестно».
 	if res.Matched && category != "" {
 		note := smsNote(res.Merchant, entryLabel(entry))
-		tx, err := s.ledger.Add(res.Type, receivedAt, category, res.Amount, note)
+		tx, err := s.ledger.AddFromSMS(res.Type, receivedAt, category, res.Amount, note, res.Merchant)
 		if err != nil {
 			return IngestOutcome{}, err
 		}
@@ -468,7 +468,13 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	if !typ.Valid() {
 		return nil, fmt.Errorf("sms: укажите тип операции (расход/доход)")
 	}
-	tx, err := s.ledger.Add(typ, d.ReceivedAt, categoryID, *amount, smsNote(d.Merchant, d.RawText))
+	label := ""
+	if d.Merchant != "" {
+		if e, _ := s.merchants.Entry(d.Merchant); e != nil {
+			label = e.Label
+		}
+	}
+	tx, err := s.ledger.AddFromSMS(typ, d.ReceivedAt, categoryID, *amount, smsNote(d.Merchant, label), d.Merchant)
 	if err != nil {
 		return nil, err
 	}
@@ -479,10 +485,6 @@ func (s *Service) ResolveDraft(id, categoryID string, amountOverride *money.Mone
 	// Запомнить: закрепить категорию за признаком (точно) для будущих SMS,
 	// сохранив уже заданный ярлык (если был).
 	if rememberMerchant && d.Merchant != "" {
-		label := ""
-		if e, _ := s.merchants.Entry(d.Merchant); e != nil {
-			label = e.Label
-		}
 		_ = s.merchants.Assign(d.Merchant, categoryID, label)
 	}
 	return tx, nil
