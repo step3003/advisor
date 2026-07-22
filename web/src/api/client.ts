@@ -62,9 +62,17 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   if (res.status === 204) return undefined as T;
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  let data: unknown = undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // Сервер вернул не-JSON (напр. «404 page not found») — не роняем приложение.
+      throw new ApiError(res.status, res.ok ? "Некорректный ответ сервера" : `Ошибка ${res.status}`);
+    }
+  }
   if (!res.ok) {
-    const msg = data?.error ?? `Ошибка ${res.status}`;
+    const msg = (data as { error?: string } | undefined)?.error ?? `Ошибка ${res.status}`;
     throw new ApiError(res.status, msg);
   }
   return data as T;
