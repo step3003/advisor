@@ -53,6 +53,25 @@ func TestSynthesizeAccountFormat(t *testing.T) {
 	}
 }
 
+func TestSynthesizeNameWithSpaces(t *testing.T) {
+	// Имя-отправитель со словами не должно ломать сборку даже если помечено «Счёт».
+	text := "Zachislenie perevoda 0.50 BYN. BLR ULYANA NARONSKAYA. Balance: 25.17 BYN Tel. 7299090"
+	for _, kind := range []string{KindMerchant, KindAccount} {
+		spec := SampleSpec{
+			Name: "Зачисление", Text: text, AmountText: "0.50", CurrencyText: "BYN",
+			MerchantText: "ULYANA NARONSKAYA", CaptureKind: kind, Type: core.Income,
+		}
+		tmpl, err := SynthesizeTemplate(spec)
+		if err != nil {
+			t.Fatalf("kind=%s: %v", kind, err)
+		}
+		res, _ := parseWith([]*Template{tmpl}, "", text)
+		if !res.Matched || res.Amount.Decimal() != "0.50" || res.Merchant != "ULYANA NARONSKAYA" {
+			t.Fatalf("kind=%s: got %+v (pattern %q)", kind, res, tmpl.Pattern)
+		}
+	}
+}
+
 func TestSynthesizeRejectsBadSelection(t *testing.T) {
 	// Сумма, которой нет в тексте — ошибка, а не кривой шаблон.
 	_, err := SynthesizeTemplate(SampleSpec{

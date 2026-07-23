@@ -140,12 +140,20 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 	}
 	mm := re.FindStringSubmatch(s)
 	if mm == nil {
-		return nil, fmt.Errorf("sms: собранный шаблон не совпал с образцом — выделите поля точнее")
+		return nil, fmt.Errorf("sms: не удалось собрать шаблон по этим выделениям — попробуйте выделить поля иначе")
 	}
-	if strings.TrimSpace(mm[amountGroup]) != amountText ||
-		(currencyGroup > 0 && strings.TrimSpace(mm[currencyGroup]) != currencyText) ||
-		(merchantGroup > 0 && strings.TrimSpace(mm[merchantGroup]) != merchantText) {
-		return nil, fmt.Errorf("sms: шаблон извлёк не то, что выделено — выделите поля точнее")
+	if got := strings.TrimSpace(mm[amountGroup]); got != amountText {
+		return nil, fmt.Errorf("sms: сумма собралась как «%s», а выделена «%s» — возможно, выделен остаток (Balance), а не сумма операции", got, amountText)
+	}
+	if currencyGroup > 0 {
+		if got := strings.TrimSpace(mm[currencyGroup]); got != currencyText {
+			return nil, fmt.Errorf("sms: валюта собралась как «%s», а выделена «%s» — выделите валюту рядом с суммой", got, currencyText)
+		}
+	}
+	if merchantGroup > 0 {
+		if got := strings.TrimSpace(mm[merchantGroup]); got != merchantText {
+			return nil, fmt.Errorf("sms: контрагент собрался как «%s», а выделен «%s» — выделите его целиком", got, merchantText)
+		}
 	}
 	return t, nil
 }
@@ -159,19 +167,19 @@ func overlaps(fs []synthField) bool {
 	return false
 }
 
-func merchantPattern(kind, value string) string {
-	if kind == KindAccount && accountValueRe.MatchString(value) {
+// merchantPattern обобщает признак по его СОДЕРЖИМОМУ, а не по типу: чистый
+// номер (цифры/звёздочка) — узкий класс; всё остальное (имена со словами) —
+// «любой текст» с якорем-концом. Так имя со словами не ломает сборку.
+func merchantPattern(_, value string) string {
+	if accountValueRe.MatchString(value) {
 		return `([0-9*]+)`
-	}
-	if kind == KindAccount {
-		return `(\S+?)`
 	}
 	return `(.+?)`
 }
 
-func needsTrailingAnchor(kind, value string) bool {
+func needsTrailingAnchor(_, value string) bool {
 	// Ограниченный класс [0-9*]+ сам останавливается — якорь не нужен.
-	return !(kind == KindAccount && accountValueRe.MatchString(value))
+	return !accountValueRe.MatchString(value)
 }
 
 // leadingAnchor возвращает литеральный якорь перед полем: ближайшее слово слева
