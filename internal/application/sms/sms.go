@@ -182,6 +182,29 @@ func (s *Service) DeleteMerchant(name string) error {
 	return s.merchants.Delete(strings.TrimSpace(name))
 }
 
+// IgnoreMerchant помечает признак «не учитывать»: заводит шаблон-мусор на его имя
+// (будущие сообщения с ним уходят в «Отфильтрованные», фильтр приоритетнее
+// разбора) и убирает его из справочника контрагентов.
+func (s *Service) IgnoreMerchant(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("sms: пустой признак")
+	}
+	t := &Template{
+		ID:        s.ids.NewID(),
+		Name:      "Не учитывать: " + name,
+		Pattern:   regexp.QuoteMeta(name),
+		Action:    ActionDiscard,
+		Type:      core.Expense,
+		Enabled:   true,
+		CreatedAt: s.clock.Now().UTC(),
+	}
+	if err := s.templates.Save(t); err != nil {
+		return err
+	}
+	return s.merchants.Delete(name)
+}
+
 // --- Шаблоны (CRUD) ---
 
 func (s *Service) ListTemplates() ([]*Template, error) { return s.templates.List() }

@@ -167,6 +167,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sms/merchants", s.handleListMerchants)
 	mux.HandleFunc("POST /api/sms/merchants/assign", s.handleAssignMerchant)
 	mux.HandleFunc("POST /api/sms/merchants/delete", s.handleDeleteMerchant)
+	mux.HandleFunc("POST /api/sms/merchants/ignore", s.handleIgnoreMerchant)
 
 	// Экспорт
 	mux.HandleFunc("GET /api/export/json", s.handleExportJSON)

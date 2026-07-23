@@ -422,6 +422,42 @@ func TestSMSDiscardBeatsOperation(t *testing.T) {
 	}
 }
 
+func TestSMSIgnoreMerchant(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories", createCategoryReq{Name: "П", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+	// Широкий шаблон ловит Perevod с контрагентом.
+	tmpl := smsTemplateDTO{
+		Name: "Приор", Pattern: `Perevod ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", DefaultCategoryID: cat.ID, Enabled: true,
+	}
+	do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	p2p := "Perevod 10.00 BYN. BLR P2P SDBO NO FEE. Balance: 15.17 BYN"
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{"sender": "P", "text": p2p, "receivedAt": "2026-07-23"}, true)
+
+	// Контрагент создался — помечаем «не учитывать».
+	rec, body := do(t, s, http.MethodPost, "/api/sms/merchants/ignore", map[string]string{"name": "P2P SDBO NO FEE"}, true)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("ignore: %d — %s", rec.Code, body)
+	}
+	// Контрагент исчез из справочника.
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	var ms []merchantDTO
+	mustJSON(t, body, &ms)
+	if len(ms) != 0 {
+		t.Fatalf("контрагент должен исчезнуть, got %d", len(ms))
+	}
+	// Новый такой же перевод — теперь в архив, не в операцию.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{"sender": "P", "text": p2p, "receivedAt": "2026-07-23"}, true)
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=filtered", nil, true)
+	var filtered []draftDTO
+	mustJSON(t, body, &filtered)
+	if len(filtered) != 1 {
+		t.Fatalf("новый перевод должен уйти в архив, там %d", len(filtered))
+	}
+}
+
 func TestSMSDeleteMerchant(t *testing.T) {
 	s := newTestServer(t)
 	// Шаблон с захватом контрагента, дефолт-категория чтобы операция создалась.

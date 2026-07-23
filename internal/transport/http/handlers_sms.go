@@ -326,6 +326,21 @@ func (s *Server) handleDeleteMerchant(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleIgnoreMerchant(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.user(r).SMS.IgnoreMerchant(req.Name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteDraft(w http.ResponseWriter, r *http.Request) {
 	if err := s.user(r).SMS.DeleteDraft(r.PathValue("id")); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

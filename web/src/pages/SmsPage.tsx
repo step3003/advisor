@@ -23,7 +23,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconChevronDown, IconEdit, IconTrash } from "@tabler/icons-react";
+import { IconBan, IconChevronDown, IconEdit, IconTrash } from "@tabler/icons-react";
 
 import {
   assignMerchant,
@@ -32,6 +32,7 @@ import {
   deleteMerchant,
   deleteDraft,
   deleteSmsTemplate,
+  ignoreMerchant,
   listInbox,
   listMerchants,
   listSmsTemplates,
@@ -390,6 +391,26 @@ function ResolveModal({
     }
   }
 
+  // «Не учитывать»: создаёт фильтр-мусор по признаку сообщения (напр. P2P-перевод
+  // между своими картами) и убирает ошибочно созданного контрагента. Дальше такие
+  // сообщения уходят в «Отфильтрованные» (фильтр приоритетнее разбора).
+  async function ignore() {
+    const sig = draft.merchant?.trim();
+    if (!sig) {
+      notifyError(new Error("В сообщении нет распознанного признака для фильтра. Удали черновик или заведи фильтр «по образцу»."));
+      return;
+    }
+    if (!confirm(`Не учитывать всё с «${sig}»? Такие сообщения будут уходить в «Отфильтрованные», не в статистику.`)) return;
+    try {
+      await ignoreMerchant(sig);
+      await deleteDraft(draft.id).catch(() => {});
+      onDone();
+      notifyOk(`«${sig}» больше не учитывается`);
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
   return (
     <Modal opened={opened} onClose={onClose} title="Разобрать входящее SMS">
       <Stack gap="xs">
@@ -405,9 +426,12 @@ function ResolveModal({
             label={`Запомнить: «${draft.merchant}» → эта категория (будущие SMS разнесутся сами)`}
           />
         )}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Отмена</Button>
-          <Button onClick={submit}>Создать операцию</Button>
+        <Group justify="space-between" mt="xs">
+          <Button variant="subtle" color="gray" onClick={ignore}>Не учитывать (мусор)</Button>
+          <Group gap="xs">
+            <Button variant="default" onClick={onClose}>Отмена</Button>
+            <Button onClick={submit}>Создать операцию</Button>
+          </Group>
         </Group>
       </Stack>
     </Modal>
@@ -438,6 +462,16 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
       notifyError(e);
     }
   };
+  const ignore = async (name: string) => {
+    if (!confirm(`Не учитывать «${name}»? Заведём фильтр — такие сообщения уйдут в «Отфильтрованные», не в статистику.`)) return;
+    try {
+      await ignoreMerchant(name);
+      onChange();
+      notifyOk(`«${name}» больше не учитывается`);
+    } catch (e) {
+      notifyError(e);
+    }
+  };
 
   const contractors = merchants.filter((m) => m.kind !== "account");
   const accounts = merchants.filter((m) => m.kind === "account");
@@ -463,7 +497,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {contractors.map((m) => <MerchantRow key={m.name} m={m} onAssign={assign} onDelete={remove} />)}
+          {contractors.map((m) => <MerchantRow key={m.name} m={m} onAssign={assign} onDelete={remove} onIgnore={ignore} />)}
           {contractors.length === 0 && (
             <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет.</Text></Table.Td></Table.Tr>
           )}
@@ -483,7 +517,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {accounts.map((m) => <AccountRow key={m.name} m={m} onAssign={assign} onDelete={remove} />)}
+          {accounts.map((m) => <AccountRow key={m.name} m={m} onAssign={assign} onDelete={remove} onIgnore={ignore} />)}
           {accounts.length === 0 && (
             <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Счетов пока нет.</Text></Table.Td></Table.Tr>
           )}
@@ -493,7 +527,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
   );
 }
 
-function MerchantRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void }) {
+function MerchantRow({ m, onAssign, onDelete, onIgnore }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void; onIgnore: (name: string) => void }) {
   return (
     <Table.Tr>
       <Table.Td>{m.name}</Table.Td>
@@ -511,14 +545,17 @@ function MerchantRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignF
         </div>
       </Table.Td>
       <Table.Td>
-        <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать (это не контрагент)"><IconTrash size={16} /></ActionIcon>
+        <Group gap={2} justify="flex-end" wrap="nowrap">
+          <ActionIcon variant="subtle" color="gray" onClick={() => onIgnore(m.name)} title="Не учитывать (в мусор)"><IconBan size={16} /></ActionIcon>
+          <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать из справочника"><IconTrash size={16} /></ActionIcon>
+        </Group>
       </Table.Td>
     </Table.Tr>
   );
 }
 
 // AccountRow — строка счёта: номер + редактируемое название + категория.
-function AccountRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void }) {
+function AccountRow({ m, onAssign, onDelete, onIgnore }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void; onIgnore: (name: string) => void }) {
   const [label, setLabel] = useState(m.label ?? "");
   return (
     <Table.Tr>
@@ -546,7 +583,10 @@ function AccountRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignFn
         </div>
       </Table.Td>
       <Table.Td>
-        <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать из справочника"><IconTrash size={16} /></ActionIcon>
+        <Group gap={2} justify="flex-end" wrap="nowrap">
+          <ActionIcon variant="subtle" color="gray" onClick={() => onIgnore(m.name)} title="Не учитывать (в мусор)"><IconBan size={16} /></ActionIcon>
+          <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать из справочника"><IconTrash size={16} /></ActionIcon>
+        </Group>
       </Table.Td>
     </Table.Tr>
   );

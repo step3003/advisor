@@ -204,6 +204,9 @@ export const assignMerchant = (name: string, categoryId: string, label = "") =>
 // Убрать признак из справочника (ошибочный «контрагент» — P2P и т.п.).
 export const deleteMerchant = (name: string) =>
   req<void>("POST", "/api/sms/merchants/delete", { name });
+// «Не учитывать»: завести фильтр-мусор на признак и убрать его из справочника.
+export const ignoreMerchant = (name: string) =>
+  req<void>("POST", "/api/sms/merchants/ignore", { name });
 
 // --- Аккаунты ---
 export const authStatus = () =>
