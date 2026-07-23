@@ -57,9 +57,10 @@ func TestSynthesizeNameWithSpaces(t *testing.T) {
 	// Имя-отправитель со словами не должно ломать сборку даже если помечено «Счёт».
 	text := "Zachislenie perevoda 0.50 BYN. BLR ULYANA NARONSKAYA. Balance: 25.17 BYN Tel. 7299090"
 	for _, kind := range []string{KindMerchant, KindAccount} {
+		// Значения приходят из UI с прилипшей пунктуацией — «BYN.», «NARONSKAYA.».
 		spec := SampleSpec{
-			Name: "Зачисление", Text: text, AmountText: "0.50", CurrencyText: "BYN",
-			MerchantText: "ULYANA NARONSKAYA", CaptureKind: kind, Type: core.Income,
+			Name: "Зачисление", Text: text, AmountText: "0.50", CurrencyText: "BYN.",
+			MerchantText: "ULYANA NARONSKAYA.", CaptureKind: kind, Type: core.Income,
 		}
 		tmpl, err := SynthesizeTemplate(spec)
 		if err != nil {

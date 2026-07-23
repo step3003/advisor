@@ -5,10 +5,19 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"advisor/internal/domain/core"
 	"advisor/internal/domain/money"
 )
+
+// trimFieldPunct убирает пунктуацию/пробелы по краям выделенного значения
+// (токены из SMS часто приходят с прилипшей точкой: «BYN.», «NARONSKAYA.»).
+func trimFieldPunct(s string) string {
+	return strings.TrimFunc(strings.TrimSpace(s), func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '*')
+	})
+}
 
 // SampleSpec — задание на сборку шаблона «по образцу»: реальный текст SMS и
 // выделенные пользователем значения полей (как подстроки этого текста).
@@ -45,7 +54,7 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 
 	// Мусор: паттерн — литеральная фраза-признак; извлекать нечего.
 	if normalizeAction(spec.Action) == ActionDiscard {
-		sig := strings.TrimSpace(spec.SignatureText)
+		sig := trimFieldPunct(spec.SignatureText)
 		if sig == "" {
 			return nil, fmt.Errorf("sms: отметьте слово-признак мусора")
 		}
@@ -59,7 +68,7 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 		}, nil
 	}
 
-	amountText := strings.TrimSpace(spec.AmountText)
+	amountText := trimFieldPunct(spec.AmountText)
 	if amountText == "" {
 		return nil, fmt.Errorf("sms: выделите сумму в сообщении")
 	}
@@ -69,7 +78,7 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 	}
 	fields := []synthField{{aStart, aStart + len(amountText), "amount"}}
 
-	currencyText := strings.TrimSpace(spec.CurrencyText)
+	currencyText := trimFieldPunct(spec.CurrencyText)
 	if currencyText != "" {
 		// Валюту ищем после суммы — так снимается неоднозначность (напр. два "BYN").
 		from := aStart + len(amountText)
@@ -84,7 +93,7 @@ func SynthesizeTemplate(spec SampleSpec) (*Template, error) {
 		fields = append(fields, synthField{cs, cs + len(currencyText), "currency"})
 	}
 
-	merchantText := strings.TrimSpace(spec.MerchantText)
+	merchantText := trimFieldPunct(spec.MerchantText)
 	if merchantText != "" {
 		idx := strings.Index(s, merchantText)
 		if idx < 0 {
