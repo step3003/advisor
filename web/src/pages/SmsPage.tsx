@@ -29,6 +29,7 @@ import {
   assignMerchant,
   createSmsTemplate,
   createTemplateFromSample,
+  deleteMerchant,
   deleteDraft,
   deleteSmsTemplate,
   listInbox,
@@ -173,7 +174,7 @@ export function SmsPage() {
               <Table.Tr key={d.id}>
                 <Table.Td>{d.receivedAt}</Table.Td>
                 <Table.Td>{d.rawSender}</Table.Td>
-                <Table.Td><Text size="sm" lineClamp={2} maw={260}>{d.rawText}</Text></Table.Td>
+                <Table.Td><Text size="sm" style={{ whiteSpace: "normal", wordBreak: "break-word", maxWidth: 420 }}>{d.rawText}</Text></Table.Td>
                 <Table.Td>{d.merchant || <Text c="dimmed" size="sm">—</Text>}</Table.Td>
                 <Table.Td>{d.amount ? formatMoney(d.amount) : <Text c="dimmed" size="sm">?</Text>}</Table.Td>
                 <Table.Td>
@@ -428,6 +429,15 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
       notifyError(e);
     }
   };
+  const remove = async (name: string) => {
+    if (!confirm(`Убрать «${name}» из справочника?`)) return;
+    try {
+      await deleteMerchant(name);
+      onChange();
+    } catch (e) {
+      notifyError(e);
+    }
+  };
 
   const contractors = merchants.filter((m) => m.kind !== "account");
   const accounts = merchants.filter((m) => m.kind === "account");
@@ -449,12 +459,13 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
             <Table.Th ta="right">Встреч</Table.Th>
             <Table.Th ta="right">Оборот</Table.Th>
             <Table.Th>Категория</Table.Th>
+            <Table.Th />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {contractors.map((m) => <MerchantRow key={m.name} m={m} onAssign={assign} />)}
+          {contractors.map((m) => <MerchantRow key={m.name} m={m} onAssign={assign} onDelete={remove} />)}
           {contractors.length === 0 && (
-            <Table.Tr><Table.Td colSpan={4}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет.</Text></Table.Td></Table.Tr>
+            <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Контрагентов пока нет.</Text></Table.Td></Table.Tr>
           )}
         </Table.Tbody>
       </Table>
@@ -468,12 +479,13 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
             <Table.Th ta="right">Встреч</Table.Th>
             <Table.Th ta="right">Оборот</Table.Th>
             <Table.Th>Категория</Table.Th>
+            <Table.Th />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {accounts.map((m) => <AccountRow key={m.name} m={m} onAssign={assign} />)}
+          {accounts.map((m) => <AccountRow key={m.name} m={m} onAssign={assign} onDelete={remove} />)}
           {accounts.length === 0 && (
-            <Table.Tr><Table.Td colSpan={5}><Text c="dimmed" ta="center" py="sm">Счетов пока нет.</Text></Table.Td></Table.Tr>
+            <Table.Tr><Table.Td colSpan={6}><Text c="dimmed" ta="center" py="sm">Счетов пока нет.</Text></Table.Td></Table.Tr>
           )}
         </Table.Tbody>
       </Table>
@@ -481,7 +493,7 @@ function MerchantsCard({ merchants, onChange }: { merchants: Merchant[]; onChang
   );
 }
 
-function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
+function MerchantRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void }) {
   return (
     <Table.Tr>
       <Table.Td>{m.name}</Table.Td>
@@ -498,12 +510,15 @@ function MerchantRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
           />
         </div>
       </Table.Td>
+      <Table.Td>
+        <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать (это не контрагент)"><IconTrash size={16} /></ActionIcon>
+      </Table.Td>
     </Table.Tr>
   );
 }
 
 // AccountRow — строка счёта: номер + редактируемое название + категория.
-function AccountRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
+function AccountRow({ m, onAssign, onDelete }: { m: Merchant; onAssign: AssignFn; onDelete: (name: string) => void }) {
   const [label, setLabel] = useState(m.label ?? "");
   return (
     <Table.Tr>
@@ -529,6 +544,9 @@ function AccountRow({ m, onAssign }: { m: Merchant; onAssign: AssignFn }) {
             placeholder="Назначить…"
           />
         </div>
+      </Table.Td>
+      <Table.Td>
+        <ActionIcon variant="subtle" color="red" onClick={() => onDelete(m.name)} title="Убрать из справочника"><IconTrash size={16} /></ActionIcon>
       </Table.Td>
     </Table.Tr>
   );
@@ -639,7 +657,7 @@ function TeachModal({ opened, onClose, draft, onDone }: {
           </Group>
         )}
 
-        <Box style={{ lineHeight: 2.2, padding: 8, border: "1px solid var(--mantine-color-default-border)", borderRadius: 6 }}>
+        <Box style={{ lineHeight: 2.8, padding: 12, fontSize: 15, background: "var(--mantine-color-default-hover)", borderRadius: 8 }}>
           {tokens.map((tok, i) => {
             const r = roleOf(i);
             return (
@@ -647,10 +665,11 @@ function TeachModal({ opened, onClose, draft, onDone }: {
                 key={i}
                 onClick={() => click(i)}
                 style={{
-                  padding: "2px 5px", margin: 1, borderRadius: 4,
-                  fontFamily: "monospace", fontSize: 13,
-                  background: r ? `var(--mantine-color-${ROLE_COLOR[r]}-light)` : "transparent",
-                  color: r ? `var(--mantine-color-${ROLE_COLOR[r]}-light-color)` : undefined,
+                  padding: "4px 7px", margin: 2, borderRadius: 5,
+                  fontSize: 15, lineHeight: 1.5,
+                  background: r ? `var(--mantine-color-${ROLE_COLOR[r]}-filled)` : "var(--mantine-color-body)",
+                  color: r ? "var(--mantine-color-white)" : undefined,
+                  border: "1px solid var(--mantine-color-default-border)",
                 }}
               >
                 {tok.text}

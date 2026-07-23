@@ -363,6 +363,97 @@ func TestSMSDiscardFlow(t *testing.T) {
 	}
 }
 
+func TestSMSDiscardBeatsOperation(t *testing.T) {
+	s := newTestServer(t)
+	_, body := do(t, s, http.MethodPost, "/api/categories",
+		createCategoryReq{Name: "Прочее", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+
+	// Широкий шаблон-операция ловит и Oplata, и Perevod.
+	op := smsTemplateDTO{
+		Name: "Приор", Pattern: `(?:Oplata|Perevod) ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense",
+		DefaultCategoryID: cat.ID, Enabled: true,
+	}
+	rec, body := do(t, s, http.MethodPost, "/api/sms/templates", op, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create op template: %d — %s", rec.Code, body)
+	}
+	// Фильтр-мусор на P2P-переводы между своими картами.
+	junk := smsTemplateDTO{Name: "P2P", Pattern: `P2P SDBO NO FEE`, Action: "discard", Enabled: true}
+	rec, body = do(t, s, http.MethodPost, "/api/sms/templates", junk, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create discard template: %d — %s", rec.Code, body)
+	}
+
+	// P2P-перевод подходит под оба — но мусор приоритетнее → в архив, не в операцию.
+	_, body = do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank",
+		"text":   "Perevod 10.00 BYN. BLR P2P SDBO NO FEE. Balance: 12.67 BYN", "receivedAt": "2026-07-23",
+	}, true)
+	var out map[string]any
+	mustJSON(t, body, &out)
+	if out["matched"] != true || out["transactionId"] != "" {
+		t.Fatalf("P2P не должен становиться операцией, got %v", out)
+	}
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	var txs []transactionDTO
+	mustJSON(t, body, &txs)
+	if len(txs) != 0 {
+		t.Fatalf("операций быть не должно, got %d", len(txs))
+	}
+	_, body = do(t, s, http.MethodGet, "/api/inbox?status=filtered", nil, true)
+	var filtered []draftDTO
+	mustJSON(t, body, &filtered)
+	if len(filtered) != 1 {
+		t.Fatalf("P2P должен уйти в архив, там %d", len(filtered))
+	}
+
+	// А обычная покупка тем же шаблоном — по-прежнему операция.
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "Priorbank",
+		"text":   "Oplata 5.00 BYN. BLR EUROPT. Balance: 1.00 BYN", "receivedAt": "2026-07-23",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/transactions?ym=2026-07", nil, true)
+	mustJSON(t, body, &txs)
+	if len(txs) != 1 {
+		t.Fatalf("обычная покупка должна стать операцией, got %d", len(txs))
+	}
+}
+
+func TestSMSDeleteMerchant(t *testing.T) {
+	s := newTestServer(t)
+	// Шаблон с захватом контрагента, дефолт-категория чтобы операция создалась.
+	_, body := do(t, s, http.MethodPost, "/api/categories", createCategoryReq{Name: "П", Type: "expense"}, true)
+	var cat categoryDTO
+	mustJSON(t, body, &cat)
+	tmpl := smsTemplateDTO{
+		Name: "T", Pattern: `Oplata ([0-9]+[.,][0-9]{2}) ([A-Z]{3})\. BLR (.+?)\. Balance`,
+		AmountGroup: 1, CurrencyGroup: 2, MerchantGroup: 3, Type: "expense", DefaultCategoryID: cat.ID, Enabled: true,
+	}
+	do(t, s, http.MethodPost, "/api/sms/templates", tmpl, true)
+	do(t, s, http.MethodPost, "/api/ingest/sms", map[string]string{
+		"sender": "P", "text": "Oplata 1.00 BYN. BLR P2P SDBO NO FEE. Balance: 1 BYN", "receivedAt": "2026-07-23",
+	}, true)
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	var ms []merchantDTO
+	mustJSON(t, body, &ms)
+	if len(ms) != 1 {
+		t.Fatalf("ожидался 1 контрагент, got %d", len(ms))
+	}
+	// Удаляем ошибочный контрагент.
+	rec, body := do(t, s, http.MethodPost, "/api/sms/merchants/delete", map[string]string{"name": "P2P SDBO NO FEE"}, true)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d — %s", rec.Code, body)
+	}
+	_, body = do(t, s, http.MethodGet, "/api/sms/merchants", nil, true)
+	mustJSON(t, body, &ms)
+	if len(ms) != 0 {
+		t.Fatalf("контрагент должен исчезнуть, got %d", len(ms))
+	}
+}
+
 func TestSMSAccountKindAndLabel(t *testing.T) {
 	s := newTestServer(t)
 	_, body := do(t, s, http.MethodPost, "/api/categories",

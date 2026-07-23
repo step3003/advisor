@@ -166,6 +166,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// Справочник контрагентов/счетов (авто-накопление из SMS) + привязка категории.
 	mux.HandleFunc("GET /api/sms/merchants", s.handleListMerchants)
 	mux.HandleFunc("POST /api/sms/merchants/assign", s.handleAssignMerchant)
+	mux.HandleFunc("POST /api/sms/merchants/delete", s.handleDeleteMerchant)
 
 	// Экспорт
 	mux.HandleFunc("GET /api/export/json", s.handleExportJSON)

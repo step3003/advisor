@@ -201,6 +201,9 @@ export const listMerchants = () => req<Merchant[]>("GET", "/api/sms/merchants");
 // Закрепить категорию и название за признаком (точно). Пустые значения — сброс.
 export const assignMerchant = (name: string, categoryId: string, label = "") =>
   req<void>("POST", "/api/sms/merchants/assign", { name, categoryId, label });
+// Убрать признак из справочника (ошибочный «контрагент» — P2P и т.п.).
+export const deleteMerchant = (name: string) =>
+  req<void>("POST", "/api/sms/merchants/delete", { name });
 
 // --- Аккаунты ---
 export const authStatus = () =>

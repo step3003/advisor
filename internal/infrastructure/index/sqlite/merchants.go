@@ -94,6 +94,12 @@ func (r *MerchantRepo) Assign(name, categoryID, label string) error {
 	return err
 }
 
+// Delete убирает признак из справочника (сами операции не трогает).
+func (r *MerchantRepo) Delete(name string) error {
+	_, err := r.idx.db.Exec(`DELETE FROM merchants WHERE owner_id=? AND name=?`, r.owner, name)
+	return err
+}
+
 // Entry возвращает запись признака или nil, если её нет.
 func (r *MerchantRepo) Entry(name string) (*smssvc.MerchantEntry, error) {
 	row := r.idx.db.QueryRow(`SELECT name,kind,label,seen_count,total_minor,currency,last_seen,category_id

@@ -139,6 +139,7 @@ type MerchantRepo interface {
 	List() ([]*MerchantEntry, error)             // по убыванию частоты
 	Assign(name, categoryID, label string) error // закрепить категорию и ярлык
 	Entry(name string) (*MerchantEntry, error)   // запись или nil, если нет
+	Delete(name string) error                    // убрать признак из справочника
 }
 
 // UnknownMerchant — метка операции, когда признак из SMS не распознан.
@@ -173,6 +174,12 @@ func (s *Service) AssignMerchant(name, categoryID, label string) error {
 		return fmt.Errorf("sms: пустой признак")
 	}
 	return s.merchants.Assign(name, categoryID, strings.TrimSpace(label))
+}
+
+// DeleteMerchant убирает признак из справочника (напр. ошибочно созданный
+// «контрагент», который им не является — P2P-перевод и т.п.).
+func (s *Service) DeleteMerchant(name string) error {
+	return s.merchants.Delete(strings.TrimSpace(name))
 }
 
 // --- Шаблоны (CRUD) ---
@@ -260,7 +267,10 @@ func validateTemplate(t *Template) error {
 	}
 	t.Action = normalizeAction(t.Action)
 	if t.Action == ActionDiscard {
-		return nil // мусор — извлекать нечего
+		if !t.Type.Valid() {
+			t.Type = core.Expense // мусор не создаёт операций; тип нужен лишь для CHECK в БД
+		}
+		return nil
 	}
 	if t.AmountGroup < 1 {
 		return fmt.Errorf("sms: номер группы суммы должен быть ≥ 1")
@@ -377,9 +387,34 @@ func entryLabel(e *MerchantEntry) string {
 	return e.Label
 }
 
-// parseWith применяет шаблоны по порядку и возвращает первый успешный разбор.
+// templateMatches — совпал ли шаблон по отправителю и паттерну.
+func templateMatches(t *Template, sender, text string) bool {
+	if t.Sender != "" && !strings.Contains(strings.ToLower(sender), strings.ToLower(t.Sender)) {
+		return false
+	}
+	re, err := regexp.Compile(t.Pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(text)
+}
+
+// parseWith применяет шаблоны и возвращает первый успешный разбор. Сначала
+// проверяются шаблоны-мусор (фильтр приоритетнее разбора: если сообщение —
+// мусор, оно отбрасывается, даже если под него подошёл бы разбор операции).
 func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
+	// 1) Мусор.
 	for _, t := range tmpls {
+		if normalizeAction(t.Action) != ActionDiscard || !templateMatches(t, sender, text) {
+			continue
+		}
+		return ParseResult{Matched: true, Action: ActionDiscard, TemplateID: t.ID, TemplateName: t.Name}, nil
+	}
+	// 2) Операции.
+	for _, t := range tmpls {
+		if normalizeAction(t.Action) == ActionDiscard {
+			continue
+		}
 		if t.Sender != "" && !strings.Contains(strings.ToLower(sender), strings.ToLower(t.Sender)) {
 			continue
 		}
@@ -388,17 +423,7 @@ func parseWith(tmpls []*Template, sender, text string) (ParseResult, error) {
 			continue // некорректный шаблон — пропускаем
 		}
 		m := re.FindStringSubmatch(text)
-		if m == nil {
-			continue
-		}
-		// Шаблон-мусор: достаточно совпадения паттерна, извлекать нечего.
-		if normalizeAction(t.Action) == ActionDiscard {
-			return ParseResult{
-				Matched: true, Action: ActionDiscard,
-				TemplateID: t.ID, TemplateName: t.Name,
-			}, nil
-		}
-		if t.AmountGroup >= len(m) {
+		if m == nil || t.AmountGroup >= len(m) {
 			continue
 		}
 		cur := strings.TrimSpace(t.FixedCurrency)
